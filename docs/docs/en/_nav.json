@@ -3,6 +3,7 @@
     "text": "Guide",
     "items": [
       { "text": "Introduction", "link": "/en/guide/" },
+      { "text": "User Guide", "link": "/en/guide/usage" },
       { "text": "Deploy", "link": "/en/guide/deploy" },
       { "text": "Development", "link": "/en/guide/development" },
       { "text": "SEO", "link": "/en/guide/seo" },

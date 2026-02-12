@@ -3,6 +3,7 @@
     "text": "指南",
     "items": [
       { "text": "简介", "link": "/zh/guide/" },
+      { "text": "使用指南", "link": "/zh/guide/usage" },
       { "text": "部署", "link": "/zh/guide/deploy" },
       { "text": "本地开发", "link": "/zh/guide/development" },
       { "text": "SEO", "link": "/zh/guide/seo" },
