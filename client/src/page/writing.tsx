@@ -10,7 +10,6 @@ import Loading from 'react-loading';
 import {ShowAlertType, useAlert} from '../components/dialog';
 import {Checkbox, Input} from "../components/input";
 import {client} from "../main";
-import {headersWithAuth} from "../utils/auth";
 import {Cache} from '../utils/cache';
 import {siteName} from "../utils/constants";
 import mermaid from 'mermaid';
@@ -40,7 +39,7 @@ async function publish({
   showAlert: ShowAlertType;
 }) {
   const t = i18n.t
-  const { data, error } = await client.feed.index.post(
+  const { data, error } = await client.feed.create(
     {
       title,
       alias,
@@ -49,10 +48,7 @@ async function publish({
       tags,
       listed,
       draft,
-      createdAt,
-    },
-    {
-      headers: headersWithAuth(),
+      createdAt: createdAt?.toISOString(),
     }
   );
   if (onCompleted) {
@@ -61,7 +57,7 @@ async function publish({
   if (error) {
     showAlert(error.value as string);
   }
-  if (data && typeof data !== "string") {
+  if (data) {
     showAlert(t("publish.success"), () => {
       Cache.with().clear();
       window.location.href = "/feed/" + data.insertedId;
@@ -95,7 +91,8 @@ async function update({
   showAlert: ShowAlertType;
 }) {
   const t = i18n.t
-  const { error } = await client.feed({ id }).post(
+  const { error } = await client.feed.update(
+    id,
     {
       title,
       alias,
@@ -104,10 +101,7 @@ async function update({
       tags,
       listed,
       draft,
-      createdAt,
-    },
-    {
-      headers: headersWithAuth(),
+      createdAt: createdAt?.toISOString(),
     }
   );
   if (onCompleted) {
@@ -190,21 +184,18 @@ export function WritingPage({ id }: { id?: number }) {
 
   useEffect(() => {
     if (id) {
-      client
-        .feed({ id })
-        .get({
-          headers: headersWithAuth(),
-        })
+      client.feed
+        .get(id)
         .then(({ data }) => {
-          if (data && typeof data !== "string") {
+          if (data) {
             if (title == "" && data.title) setTitle(data.title);
             if (tags == "" && data.hashtags)
-              setTags(data.hashtags.map(({ name }) => `#${name}`).join(" "));
-            if (alias == "" && data.alias) setAlias(data.alias);
+              setTags(data.hashtags.map(({ name }: {name: string}) => `#${name}`).join(" "));
+            if (alias == "" && (data as any).alias) setAlias((data as any).alias);
             if (content == "") setContent(data.content);
-            if (summary == "") setSummary(data.summary);
-            setListed(data.listed === 1);
-            setDraft(data.draft === 1);
+            if (summary == "") setSummary((data as any).summary || "");
+            setListed((data as any).listed === 1);
+            setDraft((data as any).draft === 1);
             setCreatedAt(new Date(data.createdAt));
           }
         });

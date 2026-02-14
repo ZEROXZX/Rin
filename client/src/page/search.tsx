@@ -5,7 +5,7 @@ import { Link, useSearch } from "wouter"
 import { FeedCard } from "../components/feed_card"
 import { Waiting } from "../components/loading"
 import { client } from "../main"
-import { headersWithAuth } from "../utils/auth"
+
 import { siteName } from "../utils/constants"
 import { tryInt } from "../utils/int"
 
@@ -25,14 +25,8 @@ export function SearchPage({ keyword }: { keyword: string }) {
     const ref = useRef("")
     function fetchFeeds() {
         if (!keyword) return
-        client.search({ keyword }).get({
-            query: {
-                page: page,
-                limit: limit
-            },
-            headers: headersWithAuth()
-        }).then(({ data }) => {
-            if (data && typeof data !== 'string') {
+        client.search.search(keyword).then(({ data }) => {
+            if (data) {
                 setFeeds(data)
                 setStatus('idle')
             }

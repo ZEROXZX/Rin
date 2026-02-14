@@ -7,7 +7,7 @@ English | [简体中文](./README_zh_CN.md)
 ![GitHub branch check runs](https://img.shields.io/github/check-runs/openRin/Rin/main?style=for-the-badge)
 ![GitHub top language](https://img.shields.io/github/languages/top/openRin/Rin?style=for-the-badge)
 ![GitHub License](https://img.shields.io/github/license/openRin/Rin?style=for-the-badge)
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/openRin/Rin/deploy.yaml?style=for-the-badge)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/openRin/Rin/deploy.yml?style=for-the-badge)
 
 [![Discord](https://img.shields.io/badge/Discord-openRin-red?style=for-the-badge&color=%236e7acc)](https://discord.gg/JWbSTHvAPN)
 [![Telegram](https://img.shields.io/badge/Telegram-openRin-red?style=for-the-badge&color=%233390EC)](https://t.me/openRin)
@@ -33,6 +33,7 @@ https://xeu.life
 - **Webhook Notifications**: Receive real-time alerts for new comments via configurable webhooks.
 - **Featured Images**: Automatically detect the first image in an article and use it as the cover image in listings.
 - **Tag Parsing**: Input tags like `#Blog #Cloudflare` and have them automatically parsed and displayed.
+- **Type Safety**: End-to-end type safety with shared TypeScript types between client and server via `@rin/api` package.
 - ...and more! Explore all features at https://xeu.life.
 
 ## Documentation
@@ -55,6 +56,71 @@ bun run dev
 ```
 
 Visit http://localhost:5173 to start hacking!
+
+### Testing
+
+Run the test suite to ensure everything works:
+
+```bash
+# Run all tests (client + server)
+bun run test
+
+# Run server tests only
+bun run test:server
+
+# Run tests with coverage
+bun run test:coverage
+```
+
+### One-Command Deployment
+
+Deploy both frontend and backend to Cloudflare with a single command:
+
+```bash
+# Deploy everything (frontend + backend)
+bun run deploy
+
+# Deploy only backend
+bun run deploy:server
+
+# Deploy only frontend
+bun run deploy:client
+```
+
+**Required environment variables:**
+- `CLOUDFLARE_API_TOKEN` - Your Cloudflare API token
+- `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare account ID
+
+**Optional environment variables:**
+- `WORKER_NAME` - Backend worker name (default: `rin-server`)
+- `PAGES_NAME` - Frontend pages name (default: `rin-client`)
+- `DB_NAME` - D1 database name (default: `rin`)
+- `R2_BUCKET_NAME` - R2 bucket name (auto-discovered if not set)
+
+The deployment script will automatically:
+- Create D1 database if it doesn't exist
+- Auto-discover R2 bucket for image storage
+- Deploy backend to Workers
+- Build and deploy frontend to Pages
+- Run database migrations
+
+### GitHub Actions Workflows
+
+The repository includes several automated workflows:
+
+- **`ci.yml`** - Runs type checking and formatting validation on every push/PR
+- **`test.yml`** - Runs comprehensive tests (server + client) with coverage reporting
+- **`build.yml`** - Builds the project and triggers deployment
+- **`deploy.yml`** - Deploys to Cloudflare Pages and Workers
+
+**Required secrets (Repository Settings → Secrets and variables → Actions):**
+- `CLOUDFLARE_API_TOKEN` - Your Cloudflare API token with Workers and Pages permissions
+- `CLOUDFLARE_ACCOUNT_ID` - Your Cloudflare account ID
+
+**Optional configuration (Repository Settings → Secrets and variables → Variables):**
+- `WORKER_NAME`, `PAGES_NAME`, `DB_NAME` - Resource names
+- `NAME`, `DESCRIPTION`, `AVATAR` - Site configuration
+- `R2_BUCKET_NAME` - Specific R2 bucket to use
 
 Full documentation is available at https://docs.openrin.org.
 

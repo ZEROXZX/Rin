@@ -5,7 +5,7 @@ import { FeedCard } from "../components/feed_card"
 import { Waiting } from "../components/loading"
 import { client } from "../main"
 import { ProfileContext } from "../state/profile"
-import { headersWithAuth } from "../utils/auth"
+
 import { siteName } from "../utils/constants"
 import { tryInt } from "../utils/int"
 import { useTranslation } from "react-i18next";
@@ -37,15 +37,12 @@ export function FeedsPage() {
     const limit = tryInt(10, query.get("limit"), process.env.PAGE_SIZE)
     const ref = useRef("")
     function fetchFeeds(type: FeedType) {
-        client.feed.index.get({
-            query: {
-                page: page,
-                limit: limit,
-                type: type
-            },
-            headers: headersWithAuth()
+        client.feed.list({
+            page: page,
+            limit: limit,
+            type: type
         }).then(({ data }) => {
-            if (data && typeof data !== 'string') {
+            if (data) {
                 setFeeds({
                     ...feeds,
                     [type]: data

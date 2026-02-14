@@ -1,20 +1,20 @@
 import { useContext, useEffect, useState } from 'react';
 import Popup from 'reactjs-popup';
+import { useLocation } from 'wouter';
 import { ClientConfigContext } from '../state/config';
 import { Helmet } from "react-helmet";
 import { siteName } from '../utils/constants';
 import { useTranslation } from "react-i18next";
-import { useLoginModal } from '../hooks/useLoginModal';
 
 type ThemeMode = 'light' | 'dark' | 'system';
 function Footer() {
     const { t } = useTranslation()
+    const [, setLocation] = useLocation()
     const [modeState, setModeState] = useState<ThemeMode>('system');
     const config = useContext(ClientConfigContext);
     const footerHtml = config.get<string>('footer');
     const loginEnabled = config.get<boolean>('login.enabled');
     const [doubleClickTimes, setDoubleClickTimes] = useState(0);
-    const { LoginModal, setIsOpened } = useLoginModal()
     useEffect(() => {
         const mode = localStorage.getItem('theme') as ThemeMode || 'system';
         setModeState(mode);
@@ -42,9 +42,9 @@ function Footer() {
     return (
         <footer>
             <Helmet>
-                <link rel="alternate" type="application/rss+xml" title={siteName} href="/sub/rss.xml" />
-                <link rel="alternate" type="application/atom+xml" title={siteName} href="/sub/atom.xml" />
-                <link rel="alternate" type="application/json" title={siteName} href="/sub/rss.json" />
+                <link rel="alternate" type="application/rss+xml" title={siteName} href="/rss.xml" />
+                <link rel="alternate" type="application/atom+xml" title={siteName} href="/atom.xml" />
+                <link rel="alternate" type="application/json" title={siteName} href="/rss.json" />
             </Helmet>
             <div className="flex flex-col mb-8 space-y-2 justify-center items-center t-primary ani-show">
                 {footerHtml && <div dangerouslySetInnerHTML={{ __html: footerHtml }} />}
@@ -53,7 +53,7 @@ function Footer() {
                         if(doubleClickTimes >= 2){ // actually need 3 times doubleClick
                             setDoubleClickTimes(0)
                             if(!loginEnabled) {
-                                setIsOpened(true)
+                                setLocation('/login')
                             }
                         } else {
                             setDoubleClickTimes(doubleClickTimes + 1)
@@ -76,13 +76,13 @@ function Footer() {
                                     {t('footer.rss')}
                                 </p>
                                 <p>
-                                    <a href='/sub/rss.xml'>
+                                    <a href='/rss.xml'>
                                         RSS
                                     </a> <Spliter />
-                                    <a href='/sub/atom.xml'>
+                                    <a href='/atom.xml'>
                                         Atom
                                     </a> <Spliter />
-                                    <a href='/sub/rss.json'>
+                                    <a href='/rss.json'>
                                         JSON
                                     </a>
                                 </p>
@@ -97,7 +97,6 @@ function Footer() {
                     <ThemeButton mode='dark' current={modeState} label="Toggle dark mode" icon="ri-moon-line" onClick={setMode} />
                 </div>
             </div>
-            <LoginModal />
         </footer>
     );
 }

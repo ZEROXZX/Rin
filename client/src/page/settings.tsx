@@ -15,7 +15,7 @@ import {
     defaultServerConfigWrapper,
     ServerConfigContext
 } from "../state/config.tsx";
-import { headersWithAuth } from "../utils/auth.ts";
+
 import '../utils/thumb.css';
 
 
@@ -34,12 +34,8 @@ export function Settings() {
 
     useEffect(() => {
         if (ref.current) return;
-        client.config({
-            type: 'client'
-        }).get({
-            headers: headersWithAuth()
-        }).then(({ data }) => {
-            if (data && typeof data !== 'string') {
+        client.config.get('client').then(({ data }) => {
+            if (data) {
                 sessionStorage.setItem('config', JSON.stringify(data));
                 const config = new ConfigWrapper(data, defaultClientConfig)
                 setClientConfig(config)
@@ -49,12 +45,8 @@ export function Settings() {
         }).finally(() => {
             setClientLoading(false);
         })
-        client.config({
-            type: 'server'
-        }).get({
-            headers: headersWithAuth()
-        }).then(({ data }) => {
-            if (data && typeof data !== 'string') {
+        client.config.get('server').then(({ data }) => {
+            if (data) {
                 const config = new ConfigWrapper(data, defaultServerConfig)
                 setServerConfig(config)
             }
@@ -78,46 +70,42 @@ export function Settings() {
                 );
                 return;
             }
-            await client.favicon
-                .post(
-                    {
-                        file: file,
-                    },
-                    {
-                        headers: headersWithAuth(),
-                    },
-                )
-                .then(({ data }) => {
-                    if (data && typeof data !== "string") {
-                        showAlert(t("settings.favicon.update.success"));
-                    }
-                })
-                .catch((err) => {
-                    showAlert(
-                        t("settings.favicon.update.failed$message", {
-                            message: err.message,
-                        }),
-                    );
-                });
+            const formData = new FormData();
+            formData.append('file', file);
+            const response = await fetch(`${endpoint}/favicon`, {
+                method: 'POST',
+                body: formData,
+                credentials: 'include',
+            });
+            if (response.ok) {
+                showAlert(t("settings.favicon.update.success"));
+            } else {
+                showAlert(
+                    t("settings.favicon.update.failed$message", {
+                        message: response.statusText,
+                    }),
+                );
+            }
         }
     }
 
     async function onFileChange(e: ChangeEvent<HTMLInputElement>) {
         const file = e.target.files?.[0];
         if (file) {
-            await client.wp.post({
-                data: file,
-            }, {
-                headers: headersWithAuth()
-            }).then(({ data }) => {
-                if (data && typeof data !== 'string') {
-                    setMsg(t('settings.import_success$success$skipped', { success: data.success, skipped: data.skipped }))
-                    setMsgList(data.skippedList)
-                    setIsOpen(true);
-                }
-            }).catch((err) => {
-                showAlert(t('settings.import_failed$message', { message: err.message }))
-            })
+            const reader = new FileReader();
+            reader.onload = async (event) => {
+                const xmlContent = event.target?.result as string;
+                await client.wp.import(xmlContent).then(({ data, error }) => {
+                    if (data) {
+                        setMsg(t('settings.import_success$success$skipped', { success: data.imported, skipped: 0 }))
+                        setMsgList([])
+                        setIsOpen(true);
+                    } else if (error) {
+                        showAlert(t('settings.import_failed$message', { message: error.value }))
+                    }
+                })
+            };
+            reader.readAsText(file);
         }
     }
 
@@ -151,12 +139,10 @@ export function Settings() {
                             />
                             <ItemInput title={t('settings.footer.title')} description={t('settings.footer.desc')} type="client" configKey="footer" configKeyTitle="Footer HTML" />
                             <ItemButton title={t('settings.cache.clear.title')} description={t('settings.cache.clear.desc')} buttonTitle={t('clear')} onConfirm={async () => {
-                                await client.config.cache.delete(undefined, {
-                                    headers: headersWithAuth()
-                                })
-                                    .then(({ error }: { error: any }) => {
+                                await client.config.clearCache()
+                                    .then(({ error }) => {
                                         if (error) {
-                                            showAlert(t('settings.cache.clear_failed$message', { message: error.message }))
+                                            showAlert(t('settings.cache.clear_failed$message', { message: error.value }))
                                         }
                                     })
                             }} alertTitle={t('settings.cache.clear.confirm.title')} alertDescription={t('settings.cache.clear.confirm.desc')} />
@@ -251,13 +237,9 @@ function ItemSwitch({ title, description, type, configKey }: { title: string, de
         const checkedValue = checked
         setChecked(!checkedValue);
         setLoading(true);
-        client.config({
-            type
-        }).post({
+        client.config.update(type, {
             [key]: value
-        }, {
-            headers: headersWithAuth()
-        }).then(({ error }: { error: any }) => {
+        }).then(({ error }) => {
             if (error) {
                 setChecked(checkedValue);
             }
@@ -270,7 +252,7 @@ function ItemSwitch({ title, description, type, configKey }: { title: string, de
                 }
             }
             setLoading(false);
-        }).catch((err) => {
+        }).catch((err: any) => {
             showAlert(t('settings.update_failed$message', { message: err.message }))
             setChecked(checkedValue);
             setLoading(false);
@@ -319,12 +301,8 @@ function ItemInput({ title, configKeyTitle, description, type, configKey }: { ti
     }, [config]);
     function updateConfig(type: 'client' | 'server', key: string, value: any) {
         setLoading(true);
-        client.config({
-            type
-        }).post({
+        client.config.update(type, {
             [key]: value
-        }, {
-            headers: headersWithAuth()
         }).then(() => {
             if (type === 'client') {
                 const config = sessionStorage.getItem('config')
@@ -335,7 +313,7 @@ function ItemInput({ title, configKeyTitle, description, type, configKey }: { ti
                 }
             }
             setLoading(false);
-        }).catch((err) => {
+        }).catch((err: any) => {
             showAlert(t('settings.update_failed$message', { message: err.message }))
             setValue(config?.get<string>(configKey) || "");
             setLoading(false);
@@ -626,9 +604,7 @@ function AISummarySettings() {
     useEffect(() => {
         const loadConfig = async () => {
             try {
-                const response = await fetch(`${endpoint}/ai-config`, {
-                    headers: headersWithAuth()
-                });
+                const response = await fetch(`${endpoint}/ai-config`);
                 if (response.ok) {
                     const data = await response.json() as {
                         enabled?: boolean;
@@ -657,7 +633,6 @@ function AISummarySettings() {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    ...headersWithAuth()
                 },
                 body: JSON.stringify(updates)
             });
@@ -681,10 +656,8 @@ function AISummarySettings() {
         await updateConfig({ enabled: checked });
         // Refresh client config to update ai_summary.enabled in global state
         try {
-            const { data } = await client.config({ type: 'client' }).get({
-                headers: headersWithAuth()
-            });
-            if (data && typeof data !== 'string') {
+            const { data } = await client.config.get('client');
+            if (data) {
                 sessionStorage.setItem('config', JSON.stringify(data));
                 // Trigger a storage event to notify other components
                 window.dispatchEvent(new Event('storage'));

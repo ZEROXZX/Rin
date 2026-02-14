@@ -4,7 +4,6 @@
 
 | Name         | Required | Description                             | Default Value | Example Value                                       |
 |--------------|----------|-----------------------------------------|---------------|----------------------------------------------------|
-| API_URL      | Yes      | Backend URL                             | None          | http://localhost:3001                              |
 | AVATAR       | Yes      | Avatar URL for the top left of the site | None          | https://avatars.githubusercontent.com/u/36541432   |
 | NAME         | Yes      | Name & Title for the top left of the site | None          | Xeu                                                |
 | DESCRIPTION  | No       | Description for the top left of the site | None          | Omnivore                                           |
@@ -32,7 +31,6 @@ The following variables can remain unencrypted in Cloudflare Workers.
 
 | Name              | Required | Description                                           | Default Value  | Example Value                                                     |
 |-------------------|----------|-------------------------------------------------------|----------------|-------------------------------------------------------------------|
-| FRONTEND_URL      | Temporarily required | Required for including comment article link in comment notification Webhook, can be left blank | None          | https://xeu.life                                                  |
 | S3_FOLDER         | Yes      | File path for storing resources when uploading images | None           | images/                                                           |
 | S3_BUCKET         | Yes      | Name of the S3 bucket                                 | None           | images                                                            |
 | S3_REGION         | Yes      | Region of the S3 bucket, use 'auto' for Cloudflare R2 | None           | auto                                                              |
@@ -49,8 +47,10 @@ All of the following variables are required (except Webhook) and must be encrypt
 
 | Name                     | Description                                              | Example Value                                                   |
 |--------------------------|----------------------------------------------------------|-----------------------------------------------------------------|
-| RIN_GITHUB_CLIENT_ID     | Client ID for GitHub OAuth                               | Ux66poMrKi1k11M1Q1b2                                            |
-| RIN_GITHUB_CLIENT_SECRET | Client secret for GitHub OAuth                           | 1234567890abcdef1234567890abcdef12345678                        |
+| RIN_GITHUB_CLIENT_ID     | Client ID for GitHub OAuth (optional, alternative to username/password) | Ux66poMrKi1k11M1Q1b2                                            |
+| RIN_GITHUB_CLIENT_SECRET | Client secret for GitHub OAuth (optional, alternative to username/password) | 1234567890abcdef1234567890abcdef12345678                        |
+| ADMIN_USERNAME           | Username for username/password login (optional, alternative to GitHub OAuth) | admin                                                           |
+| ADMIN_PASSWORD           | Password for username/password login (optional, alternative to GitHub OAuth) | your_secure_password                                            |
 | JWT_SECRET               | Secret key required for JWT authentication, can be any regular format password | J0sT%Ch@nge#Me1                                                |
 | S3_ACCESS_KEY_ID         | KEY ID required for accessing the S3 bucket, for Cloudflare R2 use an API token ID with R2 edit permissions | 1234567890abcdef1234567890abcd                                  |
 | S3_SECRET_ACCESS_KEY     | Secret required for accessing the S3 bucket, for Cloudflare R2 use an API token with R2 edit permissions | 1234567890abcdef1234567890abcd|

@@ -3,7 +3,6 @@ import {Helmet} from 'react-helmet'
 import {Link} from "wouter"
 import {Waiting} from "../components/loading"
 import {client} from "../main"
-import {headersWithAuth} from "../utils/auth"
 import {siteName} from "../utils/constants"
 import {useTranslation} from "react-i18next";
 
@@ -19,24 +18,22 @@ export function TimelinePage() {
     const ref = useRef(false)
     const { t } = useTranslation()
     function fetchFeeds() {
-        client.feed.timeline.get({
-            headers: headersWithAuth()
-        })
+        client.feed.timeline()
         .then(({ data }) => {
-            if (data && typeof data !== 'string') {
+            if (data) {
                 const arr = Array.isArray(data) ? data : []
                 setLength(arr.length)
                 // 兼容的分组逻辑
                 const groups = (Object.groupBy
                     ? Object.groupBy(arr, ({ createdAt }) => new Date(createdAt).getFullYear())
-                    : arr.reduce<Record<number, FeedItem[]>>((acc, item) => {
+                    : arr.reduce<Record<number, any[]>>((acc, item) => {
                         const key = new Date(item.createdAt).getFullYear()
                         ;(acc[key] ||= []).push(item)
                         return acc
                     }, {})
                 )
 
-                setFeeds(groups)
+                setFeeds(groups as any)
             }
         })
         .catch(err => {

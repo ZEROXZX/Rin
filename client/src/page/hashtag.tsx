@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next"
 import { FeedCard } from "../components/feed_card"
 import { Waiting } from "../components/loading"
 import { client } from "../main"
-import { headersWithAuth } from "../utils/auth"
+
 import { siteName } from "../utils/constants"
 
 type FeedsData = {
@@ -38,11 +38,9 @@ export function HashtagPage({ name }: { name: string }) {
     const ref = useRef("")
     function fetchFeeds() {
         const nameDecoded = decodeURI(name)
-        client.tag({ name: nameDecoded }).get({
-            headers: headersWithAuth()
-        }).then(({ data }) => {
-            if (data && typeof data !== 'string') {
-                setHashtag(data)
+        client.tag.get(nameDecoded).then(({ data }) => {
+            if (data) {
+                setHashtag(data as any)
                 setStatus('idle')
             }
         })

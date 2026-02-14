@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useContext } from 'react'
 import { Helmet } from 'react-helmet'
-import { getCookie } from 'typescript-cookie'
 import { DefaultParams, PathPattern, Route, Switch } from 'wouter'
 import Footer from './components/footer'
 import { Header } from './components/header'
@@ -8,6 +7,8 @@ import { Padding } from './components/padding'
 import useTableOfContents from './hooks/useTableOfContents.tsx'
 import { client } from './main'
 import { CallbackPage } from './page/callback'
+import { LoginPage } from './page/login'
+import { ProfilePage } from './page/profile'
 import { FeedPage, TOCHeader } from './page/feed'
 import { FeedsPage } from './page/feeds'
 import { FriendsPage } from './page/friends'
@@ -18,7 +19,6 @@ import { TimelinePage } from './page/timeline'
 import { WritingPage } from './page/writing'
 import { ClientConfigContext, ConfigWrapper, defaultClientConfig } from './state/config.tsx'
 import { Profile, ProfileContext } from './state/profile'
-import { headersWithAuth } from './utils/auth'
 import { tryInt } from './utils/int'
 import { SearchPage } from './page/search.tsx'
 import { Tips, TipsPage } from './components/tips.tsx'
@@ -29,7 +29,7 @@ import { ErrorPage } from './page/error.tsx'
 function App() {
   const ref = useRef(false)
   const { t } = useTranslation()
-  const [profile, setProfile] = useState<Profile | undefined>()
+  const [profile, setProfile] = useState<Profile | undefined | null>(undefined)
   const [config, setConfig] = useState<ConfigWrapper>(new ConfigWrapper({}, new Map()))
   useEffect(() => {
     // --- 自动缩放逻辑开始 ---
@@ -44,28 +44,27 @@ function App() {
     applyScaling();
     // --- 自动缩放逻辑结束 ---
     if (ref.current) return
-    if (getCookie('token')?.length ?? 0 > 0) {
-      client.user.profile.get({
-        headers: headersWithAuth()
-      }).then(({ data }) => {
-        if (data && typeof data !== 'string') {
-          setProfile({
-            id: data.id,
-            avatar: data.avatar || '',
-            permission: data.permission,
-            name: data.username
-          })
-        }
-      })
-    }
+    client.user.profile().then(({ data, error }) => {
+      if (data) {
+        setProfile({
+          id: data.id,
+          avatar: data.avatar || '',
+          permission: data.permission,
+          name: data.username
+        })
+      } else if (error) {
+        // User not authenticated
+        setProfile(null)
+      }
+    })
     const config = sessionStorage.getItem('config')
     if (config) {
       const configObj = JSON.parse(config)
       const configWrapper = new ConfigWrapper(configObj, defaultClientConfig)
       setConfig(configWrapper)
     } else {
-      client.config({ type: "client" }).get().then(({ data }) => {
-        if (data && typeof data !== 'string') {
+      client.config.get("client").then(({ data }) => {
+        if (data) {
           sessionStorage.setItem('config', JSON.stringify(data))
           const config = new ConfigWrapper(data, defaultClientConfig)
           setConfig(config)
@@ -136,6 +135,14 @@ function App() {
 
             <RouteMe path="/callback" >
               <CallbackPage />
+            </RouteMe>
+
+            <RouteMe path="/login" >
+              <LoginPage />
+            </RouteMe>
+
+            <RouteMe path="/profile" >
+              <ProfilePage />
             </RouteMe>
 
             <RouteWithIndex path="/feed/:id">

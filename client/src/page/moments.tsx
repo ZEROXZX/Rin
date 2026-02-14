@@ -1,7 +1,7 @@
 import { useContext, useEffect, useRef, useState } from "react"
 import { Helmet } from 'react-helmet'
 import { client } from "../main"
-import { headersWithAuth } from "../utils/auth"
+
 import { siteName } from "../utils/constants"
 import { useTranslation } from "react-i18next"
 import { ProfileContext } from "../state/profile"
@@ -55,21 +55,18 @@ export function MomentsPage() {
             setLoadingMore(true)
         }
         
-        client.moments.index.get({
-            query: {
-                page: page,
-                limit: limit
-            },
-            headers: headersWithAuth()
+        client.moments.list({
+            page: page,
+            limit: limit
         }).then(({ data }) => {
-            if (data && typeof data !== 'string') {
-                setLength(data.size)
+            if (data) {
+                setLength(data.data.length)
                 setHasNextPage(data.hasNext)
                 
                 if (append) {
-                    setMoments(prev => [...prev, ...data.data])
+                    setMoments(prev => [...prev, ...data.data] as any)
                 } else {
-                    setMoments(data.data)
+                    setMoments(data.data as any)
                 }
                 
                 setCurrentPage(page)
@@ -95,31 +92,31 @@ export function MomentsPage() {
         setLoading(true)
         
         if (editingMoment) {
-            client.moments({ id: editingMoment.id }).post(
-                { content },
-                { headers: headersWithAuth() }
-            ).then(() => {
-                setContent("")
-                setEditingMoment(null)
-                setIsModalOpen(false)
-                fetchMoments(1, false)
-                showAlert(t('update.success'))
-            }).catch(error => {
-                showAlert(t('update.failed$message', { message: error.message }))
+            client.moments.update(editingMoment.id, { content })
+            .then(({ error }) => {
+                if (error) {
+                    showAlert(t('update.failed$message', { message: error.value }))
+                } else {
+                    setContent("")
+                    setEditingMoment(null)
+                    setIsModalOpen(false)
+                    fetchMoments(1, false)
+                    showAlert(t('update.success'))
+                }
             }).finally(() => {
                 setLoading(false)
             })
         } else {
-            client.moments.index.post(
-                { content },
-                { headers: headersWithAuth() }
-            ).then(() => {
-                setContent("")
-                setIsModalOpen(false)
-                fetchMoments(1, false)
-                showAlert(t('publish.success'))
-            }).catch(error => {
-                showAlert(t('publish.failed$message', { message: error.message }))
+            client.moments.create({ content })
+            .then(({ error }) => {
+                if (error) {
+                    showAlert(t('publish.failed$message', { message: error.value }))
+                } else {
+                    setContent("")
+                    setIsModalOpen(false)
+                    fetchMoments(1, false)
+                    showAlert(t('publish.success'))
+                }
             }).finally(() => {
                 setLoading(false)
             })
@@ -137,13 +134,13 @@ export function MomentsPage() {
             t("delete.title"),
             t("delete.confirm"),
             () => {
-                client.moments({ id: id }).delete({}, {
-                    headers: headersWithAuth()
-                }).then(() => {
-                    fetchMoments(1, false)
-                    showAlert(t('delete.success'))
-                }).catch(error => {
-                    showAlert(t('delete.failed$message', { message: error.message }))
+                client.moments.delete(id).then(({ error }) => {
+                    if (error) {
+                        showAlert(t('delete.failed$message', { message: error.value }))
+                    } else {
+                        fetchMoments(1, false)
+                        showAlert(t('delete.success'))
+                    }
                 })
             }
         )

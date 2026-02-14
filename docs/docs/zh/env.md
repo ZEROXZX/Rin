@@ -4,7 +4,6 @@
 
 | 名称          | 是否必须 | 描述                           | 默认值   | 示例值                                              |
 |-------------|------|------------------------------|-------|--------------------------------------------------|
-| API_URL     | 是    | 后端地址                         | 无     | http://localhost:3001                            |
 | AVATAR      | 是    | 网站左上角头像地址                    | 无     | https://avatars.githubusercontent.com/u/36541432 |
 | NAME        | 是    | 网站左上角名称 & 标题                 | 无     | Xeu                                              |
 | DESCRIPTION | 否    | 网站左上角描述                      | 无     | 杂食动物                                             |
@@ -32,7 +31,6 @@
 
 | 名称              | 是否必须 | 描述                                      | 默认值         | 示例值                                                             |
 |-----------------|------|-----------------------------------------|-------------|-----------------------------------------------------------------|
-| FRONTEND_URL    | 暂时必须 | 评论通知 Webhook 时包含评论文章链接时所需，可留空           | 无           | https://xeu.life                                                |
 | S3_FOLDER       | 是    | 上传保存图片时资源存放的文件路径                        | 无           | images/                                                         |
 | S3_BUCKET       | 是    | S3 存储桶名称                                | 无           | images                                                          |
 | S3_REGION       | 是    | S3 存储桶所在区域，如使用 Cloudflare R2 填写 auto 即可 | 无           | auto                                                            |
@@ -50,8 +48,10 @@
 
 | 名称                       | 描述                                                          | 示例值                                                              |
 |--------------------------|-------------------------------------------------------------|------------------------------------------------------------------|
-| RIN_GITHUB_CLIENT_ID     | Github OAuth 的客户端 ID                                        | Ux66poMrKi1k11M1Q1b2                                             |
-| RIN_GITHUB_CLIENT_SECRET | Github OAuth 的客户端密钥                                         | 1234567890abcdef1234567890abcdef12345678                         |
+| RIN_GITHUB_CLIENT_ID     | Github OAuth 的客户端 ID（可选，与账号密码登录二选一）                | Ux66poMrKi1k11M1Q1b2                                             |
+| RIN_GITHUB_CLIENT_SECRET | Github OAuth 的客户端密钥（可选，与账号密码登录二选一）               | 1234567890abcdef1234567890abcdef12345678                         |
+| ADMIN_USERNAME           | 账号密码登录的用户名（可选，与 GitHub OAuth 二选一）                   | admin                                                            |
+| ADMIN_PASSWORD           | 账号密码登录的密码（可选，与 GitHub OAuth 二选一）                     | your_secure_password                                             |
 | JWT_SECRET               | JWT 认证所需密钥，可为常规格式的任意密码                                      | J0sT%Ch@nge#Me1                                                  |
 | S3_ACCESS_KEY_ID         | S3 存储桶访问所需的 KEY ID，使用 Cloudflare R2 时为拥有 R2 编辑权限的 API 令牌 ID | 1234567890abcdef1234567890abcd                                   |
 | S3_SECRET_ACCESS_KEY     | S3 存储桶访问所需的 Secret，使用 Cloudflare R2 时为拥有 R2 编辑权限的 API 令牌    | 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef |
