@@ -34,6 +34,97 @@ import type {
   LoginResponse,
 } from "@rin/api";
 
+export interface SettingsConfigResponse {
+  clientConfig: ConfigResponse;
+  serverConfig: ConfigResponse;
+}
+
+export interface ConfigHealthItem {
+  id: string;
+  title: {
+    key: string;
+    values?: Record<string, string | number | boolean>;
+  };
+  status: "success" | "warning" | "danger";
+  configured: boolean;
+  impact: {
+    key: string;
+    values?: Record<string, string | number | boolean>;
+  };
+  summary: {
+    key: string;
+    values?: Record<string, string | number | boolean>;
+  };
+  suggestion?: {
+    key: string;
+    values?: Record<string, string | number | boolean>;
+  };
+  details?: Array<{
+    key: string;
+    values?: Record<string, string | number | boolean>;
+  }>;
+}
+
+export interface ConfigHealthResponse {
+  generatedAt: string;
+  summary: Record<"success" | "warning" | "danger", number>;
+  items: ConfigHealthItem[];
+}
+
+export interface QueueStatusItem {
+  id: number;
+  title: string | null;
+  aiSummaryStatus: "idle" | "pending" | "processing" | "completed" | "failed";
+  aiSummaryError: string;
+  updatedAt: string;
+  createdAt: string;
+}
+
+export interface QueueStatusResponse {
+  queueConfigured: boolean;
+  generatedAt: string;
+  summary: Record<"idle" | "pending" | "processing" | "completed" | "failed", number>;
+  items: QueueStatusItem[];
+}
+
+export interface QueueTaskActionResponse {
+  success: boolean;
+}
+
+export interface CompatTasksResponse {
+  generatedAt: string;
+  aiSummary: {
+    enabled: boolean;
+    queueConfigured: boolean;
+    eligible: number;
+    forceEligible: number;
+  };
+  blurhash: {
+    eligible: number;
+  };
+}
+
+export interface CompatAISummaryActionResponse {
+  queued: number;
+  skipped: number;
+  forced: boolean;
+}
+
+export interface CompatBlurhashCandidate {
+  id: number;
+  title: string | null;
+  content: string;
+}
+
+export interface CompatBlurhashCandidatesResponse {
+  generatedAt: string;
+  items: CompatBlurhashCandidate[];
+}
+
+export interface CompatBlurhashApplyResponse {
+  updated: boolean;
+}
+
 // Re-export for external use
 export type {
   ApiResponse,
@@ -63,6 +154,7 @@ export type {
   LoginRequest,
   LoginResponse,
 } from "@rin/api";
+
 
 /**
  * HTTP client for making API requests
@@ -107,15 +199,27 @@ class HttpClient {
 
       if (!response.ok) {
         let errorValue: unknown;
+        const responseClone = response.clone();
         try {
           errorValue = await response.json();
         } catch {
-          errorValue = await response.text();
+          errorValue = await responseClone.text();
+        }
+        // Extract error message from various formats
+        let errorMessage: string;
+        if (typeof errorValue === 'string') {
+          errorMessage = errorValue;
+        } else if (errorValue && typeof errorValue === 'object') {
+          // Handle { error: { message: string } } format
+          const err = errorValue as any;
+          errorMessage = err.error?.message || err.message || err.error || JSON.stringify(errorValue);
+        } else {
+          errorMessage = String(errorValue ?? response.statusText);
         }
         return {
           error: {
             status: response.status,
-            value: typeof errorValue === 'string' ? errorValue : String(errorValue ?? response.statusText),
+            value: errorMessage,
           },
         };
       }
@@ -350,9 +454,19 @@ class MomentsAPI {
 class ConfigAPI {
   constructor(private http: HttpClient) {}
 
+  // GET /api/config
+  async getAll(): Promise<ApiResponse<SettingsConfigResponse>> {
+    return this.http.get<SettingsConfigResponse>("/api/config");
+  }
+
   // GET /api/config/:type
   async get(type: ConfigType): Promise<ApiResponse<ConfigResponse>> {
     return this.http.get<ConfigResponse>(`/api/config/${type}`);
+  }
+
+  // POST /api/config
+  async updateAll(body: SettingsConfigResponse): Promise<ApiResponse<SettingsConfigResponse>> {
+    return this.http.post<SettingsConfigResponse>("/api/config", body);
   }
 
   // POST /api/config/:type
@@ -364,20 +478,79 @@ class ConfigAPI {
   async clearCache(): Promise<ApiResponse<void>> {
     return this.http.delete<void>("/api/config/cache");
   }
+
+  // GET /api/config/health
+  async getHealth(): Promise<ApiResponse<ConfigHealthResponse>> {
+    return this.http.get<ConfigHealthResponse>("/api/config/health");
+  }
+
+  // GET /api/config/queue-status
+  async getQueueStatus(): Promise<ApiResponse<QueueStatusResponse>> {
+    return this.http.get<QueueStatusResponse>("/api/config/queue-status");
+  }
+
+  async getCompatTasks(): Promise<ApiResponse<CompatTasksResponse>> {
+    return this.http.get<CompatTasksResponse>("/api/config/compat-tasks");
+  }
+
+  async runCompatAISummary(force = false): Promise<ApiResponse<CompatAISummaryActionResponse>> {
+    return this.http.post<CompatAISummaryActionResponse>("/api/config/compat-tasks/ai-summary", { force });
+  }
+
+  async getCompatBlurhashCandidates(): Promise<ApiResponse<CompatBlurhashCandidatesResponse>> {
+    return this.http.get<CompatBlurhashCandidatesResponse>("/api/config/compat-tasks/blurhash");
+  }
+
+  async applyCompatBlurhash(feedId: number, content: string): Promise<ApiResponse<CompatBlurhashApplyResponse>> {
+    return this.http.post<CompatBlurhashApplyResponse>(`/api/config/compat-tasks/blurhash/${feedId}`, { content });
+  }
+
+  async retryQueueTask(feedId: number): Promise<ApiResponse<QueueTaskActionResponse>> {
+    return this.http.post<QueueTaskActionResponse>(`/api/config/queue-status/${feedId}/retry`);
+  }
+
+  async deleteQueueTask(feedId: number): Promise<ApiResponse<QueueTaskActionResponse>> {
+    return this.http.delete<QueueTaskActionResponse>(`/api/config/queue-status/${feedId}`);
+  }
+
+  // POST /api/config/test-ai - Test AI model configuration
+  async testAI(body: {
+    provider?: string;
+    model?: string;
+    api_url?: string;
+    api_key?: string;
+    testPrompt?: string;
+  }): Promise<ApiResponse<{ success: boolean; response?: string; error?: string; details?: string; provider?: string; model?: string }>> {
+    return this.http.post<any>("/api/config/test-ai", body);
+  }
+
+  async testWebhook(body: {
+    webhook_url?: string;
+    "webhook.method"?: string;
+    "webhook.content_type"?: string;
+    "webhook.headers"?: string;
+    "webhook.body_template"?: string;
+    test_message?: string;
+  }): Promise<ApiResponse<{ success: boolean; error?: string; details?: string }>> {
+    return this.http.post("/api/config/test-webhook", body);
+  }
 }
 
 /**
- * AI Config API methods
+ * AI Config API methods (deprecated, use ConfigAPI instead)
+ * @deprecated AI config is now part of server config. Use client.config.get('server') and client.config.update('server', {...}) instead.
  */
 class AIConfigAPI {
   constructor(private http: HttpClient) {}
 
   // GET /api/ai-config
+  /** @deprecated Use client.config.get('server') instead */
   async get(): Promise<ApiResponse<AIConfig>> {
     return this.http.get<AIConfig>("/api/ai-config");
   }
 
   // POST /api/ai-config
+  /** @deprecated Use client.config.update('server', {...}) instead */
   async update(body: Partial<AIConfig>): Promise<ApiResponse<void>> {
     return this.http.post<void>("/api/ai-config", body);
   }
@@ -406,8 +579,13 @@ class SearchAPI {
   constructor(private http: HttpClient) {}
 
   // GET /api/search/:keyword
-  async search(keyword: string): Promise<ApiResponse<FeedListResponse>> {
-    return this.http.get<FeedListResponse>(`/api/search/${encodeURIComponent(keyword)}`);
+  async search(keyword: string, params?: { page?: number; limit?: number }): Promise<ApiResponse<FeedListResponse>> {
+    const searchParams = new URLSearchParams();
+    if (params?.page) searchParams.set("page", params.page.toString());
+    if (params?.limit) searchParams.set("limit", params.limit.toString());
+
+    const query = searchParams.toString();
+    return this.http.get<FeedListResponse>(`/api/search/${encodeURIComponent(keyword)}${query ? `?${query}` : ""}`);
   }
 }
 
@@ -465,25 +643,6 @@ class RSSAPI {
   }
 }
 
-/**
- * SEO API methods
- */
-class SEOAPI {
-  constructor(private baseUrl: string) {}
-
-  // GET /robots.txt
-  async getRobots(): Promise<string> {
-    const response = await fetch(`${this.baseUrl}/robots.txt`);
-    return response.text();
-  }
-
-  // GET /sitemap.xml
-  async getSitemap(): Promise<string> {
-    const response = await fetch(`${this.baseUrl}/sitemap.xml`);
-    return response.text();
-  }
-}
-
 // ============================================================================
 // Main API Client Class
 // ============================================================================
@@ -503,7 +662,6 @@ export class ApiClient {
   auth: AuthAPI;
   wp: WordPressAPI;
   rss: RSSAPI;
-  seo: SEOAPI;
 
   constructor(baseUrl: string) {
     this.http = new HttpClient(baseUrl);
@@ -520,7 +678,6 @@ export class ApiClient {
     this.auth = new AuthAPI(this.http);
     this.wp = new WordPressAPI(this.http);
     this.rss = new RSSAPI(baseUrl);
-    this.seo = new SEOAPI(baseUrl);
   }
 }
 

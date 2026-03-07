@@ -1,7 +1,7 @@
 {
   "name": "client",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.3.0-rc.1",
   "type": "module",
   "scripts": {
     "dev": "bunx --bun vite",
@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@rin/api": "workspace:*",
+    "@rin/config": "workspace:*",
+    "@rin/ui": "workspace:*",
     "@astroimg/timeago": "^1.1.6",
     "@monaco-editor/react": "^4.6.0",
     "@prosemirror-adapter/react": "^0.2.6",
@@ -72,7 +74,6 @@
     "rollup-plugin-visualizer": "^5.12.0",
     "typescript": "^5.2.2",
     "vite": "^6.0.0",
-    "wrangler": "^3.101.0",
     "autoprefixer": "^10.4.19",
     "i18next-parser": "^9.0.0",
     "postcss": "^8.4.38",

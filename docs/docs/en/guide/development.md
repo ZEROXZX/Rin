@@ -45,15 +45,20 @@ Visit http://localhost:11498 to start developing!
 
 All configurations are centralized in the `.env.local` file:
 
-### Frontend Configuration
+### Site Configuration
+
+:::tip
+Site configuration (name, avatar, description, pagination size, etc.) is now served dynamically from the backend and can be modified via the settings page after deployment. Environment variables are only used as default values.
+
+The following environment variables are optional:
 
 | Variable | Required | Description | Example |
 |----------|----------|-------------|---------|
-| `NAME` | Yes | Website name | `My Blog` |
-| `AVATAR` | Yes | Avatar URL | `https://...` |
-| `DESCRIPTION` | No | Website description | `A blog` |
-| `PAGE_SIZE` | No | Pagination size | `5` |
-| `RSS_ENABLE` | No | Enable RSS | `false` |
+| `NAME` | No | Website name (can be modified later) | `My Blog` |
+| `AVATAR` | No | Avatar URL (can be modified later) | `https://...` |
+| `DESCRIPTION` | No | Website description (can be modified later) | `A blog` |
+| `PAGE_SIZE` | No | Pagination size (can be modified later) | `5` |
+| `RSS_ENABLE` | No | Enable RSS (can be modified later) | `false` |
 
 ### Backend Configuration
 
@@ -264,12 +269,10 @@ GitHub OAuth needs to be configured for local development:
 ├── packages/               # Shared packages
 │   └── api/                # @rin/api - Shared API types
 ├── cli/                    # Rin CLI tool
-│   └── bin/
-│       └── rin.ts          # CLI entry point
-├── scripts/                # Development scripts
-│   ├── dev.ts             # Development server
-│   ├── setup-dev.ts       # Configuration generation
-│   └── db-migrate-local.ts    # Database migration
+│   ├── bin/               # Thin executable entrypoints
+│   ├── src/               # Commands, tasks, shared helpers
+│   └── templates/         # Git hook and file templates
+├── scripts/                # Compatibility wrappers around CLI tasks
 ├── docs/                   # Documentation
 ├── .env.example            # Environment variable example
 ├── .env.local              # Local configuration (not committed to Git)

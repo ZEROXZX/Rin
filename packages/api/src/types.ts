@@ -27,6 +27,8 @@ export interface Feed {
   createdAt: string;
   updatedAt: string;
   ai_summary: string;
+  ai_summary_status: "idle" | "pending" | "processing" | "completed" | "failed";
+  ai_summary_error: string;
   hashtags: Array<{ id: number; name: string }>;
   user: {
     avatar: string | null;
@@ -336,8 +338,10 @@ export const API_PATHS = {
   CONFIG_UPDATE: (type: ConfigType) => `/config/${type}`,
   CONFIG_CLEAR_CACHE: '/config/cache',
 
-  // AI Config
+  // AI Config (deprecated - use CONFIG_GET/CONFIG_UPDATE with 'server' type instead)
+  /** @deprecated Use CONFIG_GET('server') instead. AI config is now part of server config. */
   AI_CONFIG_GET: '/ai-config',
+  /** @deprecated Use CONFIG_UPDATE('server', {...}) instead. AI config is now part of server config. */
   AI_CONFIG_UPDATE: '/ai-config',
 
   // Storage
@@ -356,9 +360,6 @@ export const API_PATHS = {
 
   // RSS
   RSS_GET: (name: string) => `/${encodeURIComponent(name)}`,
-
-  // SEO
-  SEO_GET: (path: string) => `/seo${path}`,
 } as const;
 
 export type APIEndpoint = typeof API_PATHS;

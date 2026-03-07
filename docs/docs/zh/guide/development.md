@@ -45,15 +45,20 @@ bun run dev
 
 所有配置都集中在 `.env.local` 文件中：
 
-### 前端配置
+### 站点配置
+
+:::tip
+站点配置（名称、头像、描述、分页大小等）现在通过服务端配置下发，可以在部署后通过设置页面修改。环境变量仅作为默认值使用。
+
+你可以选择性设置以下环境变量：
 
 | 变量名 | 必填 | 说明 | 示例 |
 |--------|------|------|------|
-| `NAME` | 是 | 网站名称 | `My Blog` |
-| `AVATAR` | 是 | 头像地址 | `https://...` |
-| `DESCRIPTION` | 否 | 网站描述 | `A blog` |
-| `PAGE_SIZE` | 否 | 分页大小 | `5` |
-| `RSS_ENABLE` | 否 | 启用 RSS | `false` |
+| `NAME` | 否 | 网站名称（可后续修改） | `My Blog` |
+| `AVATAR` | 否 | 头像地址（可后续修改） | `https://...` |
+| `DESCRIPTION` | 否 | 网站描述（可后续修改） | `A blog` |
+| `PAGE_SIZE` | 否 | 分页大小（可后续修改） | `5` |
+| `RSS_ENABLE` | 否 | 启用 RSS（可后续修改） | `false` |
 
 ### 后端配置
 
@@ -264,12 +269,10 @@ bun run dev:setup
 ├── packages/               # 共享包
 │   └── api/                # @rin/api - 共享 API 类型
 ├── cli/                    # Rin CLI 工具
-│   └── bin/
-│       └── rin.ts          # CLI 入口文件
-├── scripts/                # 开发脚本
-│   ├── dev.ts             # 开发服务器
-│   ├── setup-dev.ts       # 配置生成
-│   └── db-migrate-local.ts    # 数据库迁移
+│   ├── bin/               # 薄入口
+│   ├── src/               # 命令、任务、共享工具
+│   └── templates/         # Git hook 与文件模板
+├── scripts/                # 对 CLI 的兼容包装层
 ├── docs/                   # 文档
 ├── .env.example            # 环境变量示例
 ├── .env.local              # 本地配置（不提交到 Git）

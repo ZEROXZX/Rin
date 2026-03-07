@@ -7,10 +7,18 @@ on:
       - completed
   workflow_dispatch:
     inputs:
-      run_id:
-        description: 'Build workflow run ID (optional)'
-        required: false
+      artifact_url:
+        description: 'Cloudflare build artifact URL (.tar.gz, e.g., build-v1.0.0-cloudflare.tar.gz)'
+        required: true
         type: string
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - preview
 
 permissions:
   contents: read
@@ -20,18 +28,13 @@ permissions:
 jobs:
   prepare:
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
-      event_name: ${{ steps.meta.outputs.event_name }}
-      ref: ${{ steps.meta.outputs.ref }}
-      pr_number: ${{ steps.meta.outputs.pr_number }}
-      sha: ${{ steps.meta.outputs.sha }}
-      head_sha: ${{ steps.meta.outputs.head_sha }}
       is_production: ${{ steps.meta.outputs.is_production }}
-      is_trunk: ${{ steps.meta.outputs.is_trunk }}
-      is_pr: ${{ steps.meta.outputs.is_pr }}
+      pr_number: ${{ steps.meta.outputs.pr_number }}
     steps:
-      - name: Download build artifacts
+      - name: Download build artifacts from workflow
+        if: ${{ github.event_name == 'workflow_run' }}
         uses: actions/download-artifact@v4
         with:
           name: build-${{ github.event.workflow_run.id }}
@@ -39,60 +42,69 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Read metadata
+      - name: Download artifacts from URL
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          URL="${{ github.event.inputs.artifact_url }}"
+          echo "Downloading from: $URL"
+          
+          mkdir -p ./artifacts
+          if [[ "$URL" == *.zip ]]; then
+            curl -L "$URL" -o ./artifacts/build.zip
+            unzip -q ./artifacts/build.zip -d ./artifacts
+            rm ./artifacts/build.zip
+          else
+            curl -L "$URL" -o ./artifacts/build.tar.gz
+            tar -xzf ./artifacts/build.tar.gz -C ./artifacts
+            rm ./artifacts/build.tar.gz
+          fi
+
+      - name: Set deployment type
         id: meta
         run: |
-          EVENT_NAME=$(cat ./artifacts/build-meta/event_name)
-          REF=$(cat ./artifacts/build-meta/ref)
-          PR_NUMBER=$(cat ./artifacts/build-meta/pr_number)
-          SHA=$(cat ./artifacts/build-meta/sha)
-          HEAD_SHA=$(cat ./artifacts/build-meta/head_sha)
-
-          echo "event_name=$EVENT_NAME" >> $GITHUB_OUTPUT
-          echo "ref=$REF" >> $GITHUB_OUTPUT
-          echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
-          echo "sha=$SHA" >> $GITHUB_OUTPUT
-          echo "head_sha=$HEAD_SHA" >> $GITHUB_OUTPUT
-
-          # Determine deployment type
-          if [[ "$REF" == "refs/heads/main" || "$REF" == "refs/heads/master" ]]; then
-            echo "is_production=true" >> $GITHUB_OUTPUT
-            echo "is_trunk=false" >> $GITHUB_OUTPUT
-            echo "is_pr=false" >> $GITHUB_OUTPUT
-          elif [[ "$REF" == "refs/heads/trunk" ]]; then
-            echo "is_production=false" >> $GITHUB_OUTPUT
-            echo "is_trunk=true" >> $GITHUB_OUTPUT
-            echo "is_pr=false" >> $GITHUB_OUTPUT
-          elif [[ "$EVENT_NAME" == "pull_request" ]]; then
-            echo "is_production=false" >> $GITHUB_OUTPUT
-            echo "is_trunk=false" >> $GITHUB_OUTPUT
-            echo "is_pr=true" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # Manual deployment
+            if [ "${{ github.event.inputs.environment }}" == "production" ]; then
+              echo "is_production=true" >> $GITHUB_OUTPUT
+            else
+              echo "is_production=false" >> $GITHUB_OUTPUT
+            fi
+            echo "pr_number=0" >> $GITHUB_OUTPUT
           else
-            echo "is_production=false" >> $GITHUB_OUTPUT
-            echo "is_trunk=false" >> $GITHUB_OUTPUT
-            echo "is_pr=false" >> $GITHUB_OUTPUT
+            # Auto deployment from workflow_run - check ref
+            REF=$(cat ./artifacts/build-meta/ref 2>/dev/null || echo "unknown")
+            if [[ "$REF" == "refs/heads/main" || "$REF" == "refs/heads/master" ]]; then
+              echo "is_production=true" >> $GITHUB_OUTPUT
+            else
+              echo "is_production=false" >> $GITHUB_OUTPUT
+            fi
+            # Read PR number from build-meta
+            PR_NUMBER=$(cat ./artifacts/build-meta/pr_number 2>/dev/null || echo "0")
+            echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
           fi
+
+      - name: Upload artifacts for deploy job
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-artifacts-${{ github.run_id }}
+          path: ./artifacts
+          retention-days: 1
 
   deploy:
     needs: prepare
     runs-on: ubuntu-latest
     environment:
-      name: ${{ needs.prepare.outputs.is_production == 'true' && 'production' || needs.prepare.outputs.is_trunk == 'true' && 'preview-trunk' || format('preview-pr-{0}', needs.prepare.outputs.pr_number) }}
+      name: ${{ needs.prepare.outputs.is_production == 'true' && 'production' || 'preview' }}
       url: ${{ steps.deploy.outputs.url }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.prepare.outputs.head_sha }}
-          fetch-depth: 0
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
-          name: build-${{ github.event.workflow_run.id }}
+          name: deploy-artifacts-${{ github.run_id }}
           path: ./artifacts
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -110,10 +122,36 @@ jobs:
       - name: Restore build artifacts
         run: |
           cp -r ./artifacts/dist ./dist
-          cp -r ./artifacts/server/dist ./server/dist 2>/dev/null || true
+          if [ -d ./artifacts/server/sql ]; then
+            mkdir -p ./server
+            rm -rf ./server/sql
+            cp -r ./artifacts/server/sql ./server/sql
+          fi
           echo "Checking build artifacts..."
           ls -la ./dist/client/ || echo "No client dist found"
-          ls -la ./server/dist/ || echo "No server dist found"
+          ls -la ./dist/server/ || echo "No server dist found"
+          ls -la ./server/sql/ || echo "No server sql found"
+
+      - name: Validate deploy script version
+        run: |
+          CURRENT_HASH=$(cat ./cli/src/tasks/deploy-cf.ts ./cli/src/lib/db-migration.ts | sha256sum | awk '{print $1}')
+          ARTIFACT_HASH=$(cat ./artifacts/build-meta/deploy_script_hash 2>/dev/null || echo "")
+
+          if [ -z "$ARTIFACT_HASH" ]; then
+            echo "❌ Build artifact is missing deploy_script_hash metadata."
+            echo "Please rebuild the artifact from a newer Rin release and sync your repository before deploying."
+            exit 1
+          fi
+
+          echo "Current deploy script hash: $CURRENT_HASH"
+          echo "Artifact deploy script hash: $ARTIFACT_HASH"
+
+          if [ "$CURRENT_HASH" != "$ARTIFACT_HASH" ]; then
+            echo "❌ Deploy script hash mismatch."
+            echo "This repository's deploy logic does not match the selected artifact."
+            echo "Please sync your repository to the release that produced the artifact, then retry deployment."
+            exit 1
+          fi
 
       - name: Determine deployment config
         id: config
@@ -127,18 +165,20 @@ jobs:
           REPO_WORKER_NAME: ${{ vars.WORKER_NAME }}
           REPO_DB_NAME: ${{ vars.DB_NAME }}
         run: |
+          PR_NUMBER="${{ needs.prepare.outputs.pr_number }}"
           if [[ "${{ needs.prepare.outputs.is_production }}" == "true" ]]; then
             echo "worker_name=${REPO_WORKER_NAME:-rin-server}" >> $GITHUB_OUTPUT
             echo "db_name=${REPO_DB_NAME:-rin}" >> $GITHUB_OUTPUT
             echo "name=${REPO_NAME:-Rin}" >> $GITHUB_OUTPUT
-          elif [[ "${{ needs.prepare.outputs.is_trunk }}" == "true" ]]; then
-            echo "worker_name=${REPO_WORKER_NAME:-rin-server}-trunk" >> $GITHUB_OUTPUT
-            echo "db_name=${REPO_DB_NAME:-rin}-trunk" >> $GITHUB_OUTPUT
-            echo "name=${REPO_NAME:-Rin} (Trunk Preview)" >> $GITHUB_OUTPUT
+          elif [[ "$PR_NUMBER" != "0" ]]; then
+            # PR Preview uses -pr-<number> suffix
+            echo "worker_name=${REPO_WORKER_NAME:-rin-server}-pr-${PR_NUMBER}" >> $GITHUB_OUTPUT
+            echo "db_name=${REPO_DB_NAME:-rin-preview}" >> $GITHUB_OUTPUT
+            echo "name=${REPO_NAME:-Rin} (PR #${PR_NUMBER})" >> $GITHUB_OUTPUT
           else
-            echo "worker_name=${REPO_WORKER_NAME:-rin-server}-pr-${{ needs.prepare.outputs.pr_number }}" >> $GITHUB_OUTPUT
-            echo "db_name=${REPO_DB_NAME:-rin}-pr-${{ needs.prepare.outputs.pr_number }}" >> $GITHUB_OUTPUT
-            echo "name=${REPO_NAME:-Rin} (PR #${{ needs.prepare.outputs.pr_number }})" >> $GITHUB_OUTPUT
+            echo "worker_name=${REPO_WORKER_NAME:-rin-server}-preview" >> $GITHUB_OUTPUT
+            echo "db_name=${REPO_DB_NAME:-rin-preview}" >> $GITHUB_OUTPUT
+            echo "name=${REPO_NAME:-Rin} (Preview)" >> $GITHUB_OUTPUT
           fi
           # Output repository-level vars for use in deploy step
           echo "description=${REPO_DESCRIPTION}" >> $GITHUB_OUTPUT
@@ -158,10 +198,14 @@ jobs:
           AVATAR: ${{ steps.config.outputs.avatar || '' }}
           PAGE_SIZE: ${{ steps.config.outputs.page_size || '5' }}
           RSS_ENABLE: ${{ steps.config.outputs.rss_enable || 'false' }}
+          S3_CACHE_FOLDER: ${{ vars.S3_CACHE_FOLDER || 'cache/' }}
+          S3_FOLDER: ${{ vars.S3_FOLDER || 'images/' }}
+          S3_REGION: ${{ vars.S3_REGION || 'auto' }}
+          S3_FORCE_PATH_STYLE: ${{ vars.S3_FORCE_PATH_STYLE || 'false' }}
           R2_BUCKET_NAME: ${{ vars.R2_BUCKET_NAME || '' }}
-          S3_ENDPOINT: ${{ secrets.S3_ENDPOINT || '' }}
-          S3_ACCESS_HOST: ${{ secrets.S3_ACCESS_HOST || '' }}
-          S3_BUCKET: ${{ secrets.S3_BUCKET || '' }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT || '' }}
+          S3_ACCESS_HOST: ${{ vars.S3_ACCESS_HOST || '' }}
+          S3_BUCKET: ${{ vars.S3_BUCKET || '' }}
           S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID || '' }}
           S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY || '' }}
           RIN_GITHUB_CLIENT_ID: ${{ secrets.RIN_GITHUB_CLIENT_ID || '' }}
@@ -172,31 +216,30 @@ jobs:
           WEBHOOK_URL: ${{ vars.WEBHOOK_URL || '' }}
           RSS_TITLE: ${{ vars.RSS_TITLE || '' }}
           RSS_DESCRIPTION: ${{ vars.RSS_DESCRIPTION || '' }}
+          CACHE_STORAGE_MODE: ${{ vars.CACHE_STORAGE_MODE || 's3' }}
         run: |
-          bun run deploy
-          echo "url=https://${WORKER_NAME}.${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.workers.dev" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          bun run deploy | tee deploy_output.log
+          URL=$(grep -oP 'App URL: \Khttps://[^\s]+' deploy_output.log || echo "https://${WORKER_NAME}.${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.workers.dev")
+          echo "url=${URL}" >> $GITHUB_OUTPUT
 
-      - name: Comment deployment URL
-        if: ${{ needs.prepare.outputs.is_pr == 'true' }}
+      - name: Comment on PR
+        if: needs.prepare.outputs.pr_number != '0'
         uses: actions/github-script@v7
         with:
           script: |
             const url = '${{ steps.deploy.outputs.url }}';
             const prNumber = parseInt('${{ needs.prepare.outputs.pr_number }}');
-
-            // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber
             });
-
-            const botComment = comments.find(comment =>
-              comment.user.type === 'Bot' && comment.body.includes('Preview Deployed')
+            const botComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('🚀 **Preview deployed!**')
             );
-
-            const body = `🚀 **Preview Deployed!**\n\n- URL: ${url}\n\n*This preview will be automatically updated when you push new commits.*`;
-
+            const body = `🚀 **Preview deployed!**\n\n🔗 ${url}`;
             if (botComment) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,

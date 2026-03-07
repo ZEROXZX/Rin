@@ -1,5 +1,5 @@
 import "katex/dist/katex.min.css";
-import React, { cloneElement, isValidElement, useEffect, useMemo, useRef } from "react";
+import React, { cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import {
@@ -17,7 +17,9 @@ import Counter from "yet-another-react-lightbox/plugins/counter";
 import Download from "yet-another-react-lightbox/plugins/download";
 import Zoom from "yet-another-react-lightbox/plugins/zoom";
 import "yet-another-react-lightbox/styles.css";
+import { drawBlurhashToCanvas } from "../utils/blurhash";
 import { useColorMode } from "../utils/darkModeUtils";
+import { parseImageUrlMetadata } from "../utils/image-upload";
 
 
 const countNewlinesBeforeNode = (text: string, offset: number) => {
@@ -45,6 +47,80 @@ const isMarkdownImageLinkAtEnd = (text: string) => {
 
   return false;
 };
+
+function MarkdownImage({
+  src,
+  alt,
+  show,
+  rounded,
+  scale,
+  className,
+}: {
+  src?: string;
+  alt?: string;
+  show: (src?: string) => void;
+  rounded: boolean;
+  scale: string;
+  className?: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const { src: cleanSrc, blurhash, width, height } = parseImageUrlMetadata(src);
+  const roundedClass = rounded ? "rounded-xl" : "";
+  const aspectRatio = width && height ? `${width} / ${height}` : undefined;
+
+  useEffect(() => {
+    setLoaded(false);
+    setFailed(false);
+  }, [src]);
+
+  useEffect(() => {
+    if (!blurhash || !canvasRef.current) {
+      return;
+    }
+    try {
+      drawBlurhashToCanvas(canvasRef.current, blurhash);
+    } catch (error) {
+      console.error("Failed to render blurhash", error);
+    }
+  }, [blurhash]);
+
+  return (
+    <span
+      className={`relative inline-block max-w-full overflow-hidden ${roundedClass}`}
+      style={{ zoom: scale, aspectRatio }}
+    >
+      {blurhash && !loaded ? (
+        <canvas
+          ref={canvasRef}
+          aria-hidden="true"
+          className={`absolute inset-0 h-full w-full scale-110 blur-sm ${roundedClass}`}
+        />
+      ) : null}
+      <img
+        src={cleanSrc}
+        alt={alt}
+        width={width}
+        height={height}
+        onClick={() => {
+          show(cleanSrc);
+        }}
+        onLoad={() => {
+          setLoaded(true);
+          setFailed(false);
+        }}
+        onError={() => {
+          setLoaded(false);
+          setFailed(true);
+        }}
+        className={`mx-auto max-w-full cursor-zoom-in transition-opacity ${roundedClass} ${className || ""} ${
+          blurhash && (!loaded || failed) ? "opacity-0" : "opacity-100"
+        }`}
+      />
+    </span>
+  );
+}
 
 export function Markdown({ content }: { content: string }) {
   const colorMode = useColorMode();
@@ -78,14 +154,13 @@ export function Markdown({ content }: { content: string }) {
             rounded: boolean;
             scale: string;
           }) => (
-            <img
+            <MarkdownImage
               src={src}
-              {...props}
-              onClick={() => {
-                show(src)
-              }}
-              className={`mx-auto ${rounded ? "rounded-xl" : ""}`}
-              style={{ zoom: scale }}
+              alt={props.alt}
+              show={show}
+              rounded={rounded}
+              scale={scale}
+              className={props.className}
             />
           );
           if (
@@ -115,7 +190,7 @@ export function Markdown({ content }: { content: string }) {
           const isCodeBlock = curContent.trimStart().startsWith("```");
 
           const codeBlockStyle = {
-            fontFamily: '"Fira Code", monospace',
+            fontFamily: 'ui-monospace, "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", Menlo, monospace',
             fontSize: "14px",
             fontVariantLigatures: "normal",
             WebkitFontFeatureSettings: '"liga" 1',

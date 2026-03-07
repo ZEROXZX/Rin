@@ -1,5 +1,5 @@
 import { eq, and, like } from "drizzle-orm";
-import type { DB } from "../server";
+import type { DB } from "../core/hono-types";
 import { cache } from "../db/schema";
 import { path_join } from "./path";
 
@@ -40,7 +40,7 @@ class DatabaseStorageProvider implements StorageProvider {
     async save(): Promise<void> {
         // Get all existing keys from database for this cache type
         const existingRows = await this.db.select({ key: cache.key }).from(cache).where(eq(cache.type, this.type));
-        const existingKeys = new Set(existingRows.map(row => row.key));
+        const existingKeys = new Set(existingRows.map((row: { key: string }) => row.key));
         const currentKeys = new Set(this.cacheMap.keys());
 
         // Delete keys from database that are no longer in memory
@@ -119,6 +119,14 @@ class S3StorageProvider implements StorageProvider {
         console.log('Cache load from S3', this.cacheUrl);
         try {
             const response = await fetch(new Request(this.cacheUrl));
+            if (!response.ok) {
+                if (response.status === 404) {
+                    console.log('Cache file not found in S3, starting with empty cache');
+                } else {
+                    console.error(`Cache load from S3 failed: HTTP ${response.status}`);
+                }
+                return;
+            }
             const data = await response.json<any>();
             for (let key in data) {
                 this.cacheMap.set(key, data[key]);
@@ -170,6 +178,10 @@ export class CacheImpl {
     private storageProvider: StorageProvider;
 
     constructor(db: DB, env: Env, type: string = "cache", storageMode?: CacheStorageMode) {
+        // 确保 type 不为空，防止不同类型共享同一个存储位置
+        if (!type || type.trim() === '') {
+            throw new Error('Cache type cannot be empty');
+        }
         this.type = type;
         this.db = db;
         this.env = env;

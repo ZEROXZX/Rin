@@ -5,17 +5,18 @@ import Popup from "reactjs-popup";
 import { Link, useLocation } from "wouter";
 import { Profile, ProfileContext } from "../state/profile";
 import { Button } from "./button";
-import { IconSmall } from "./icon";
 import { Input } from "./input";
 import { Padding } from "./padding";
 import { ClientConfigContext } from "../state/config";
-import { client } from "../main";
+import { client } from "../app/runtime";
 import { removeAuthToken } from "../utils/auth";
+import { useSiteConfig } from "../hooks/useSiteConfig";
 
 
 export function Header({ children }: { children?: React.ReactNode }) {
     const profile = useContext(ProfileContext);
     const { t } = useTranslation()
+    const siteConfig = useSiteConfig();
 
     return useMemo(() => (
         <>
@@ -25,13 +26,13 @@ export function Header({ children }: { children?: React.ReactNode }) {
                         <div className="w-full flex justify-between items-center">
                             <Link aria-label={t('home')} href="/"
                                 className="hidden opacity-0 md:opacity-100 duration-300 mr-auto md:flex flex-row items-center">
-                                <img src={process.env.AVATAR} alt="Avatar" className="w-12 h-12 rounded-2xl border-2" />
+                                <img src={siteConfig.avatar} alt="Avatar" className="w-12 h-12 rounded-2xl border-2" />
                                 <div className="flex flex-col justify-center items-start mx-4">
                                     <p className="text-xl font-bold dark:text-white">
-                                        {process.env.NAME}
+                                        {siteConfig.name}
                                     </p>
                                     <p className="text-xs text-neutral-500">
-                                        {process.env.DESCRIPTION}
+                                        {siteConfig.description}
                                     </p>
                                 </div>
                             </Link>
@@ -41,14 +42,14 @@ export function Header({ children }: { children?: React.ReactNode }) {
                                     className="flex flex-row items-center bg-w t-primary rounded-full px-2 shadow-xl shadow-light">
                                     <Link aria-label={t('home')} href="/"
                                         className="visible opacity-100 md:hidden md:opacity-0 duration-300 mr-auto flex flex-row items-center py-2">
-                                        <img src={process.env.AVATAR} alt="Avatar"
+                                        <img src={siteConfig.avatar} alt="Avatar"
                                             className="w-10 h-10 rounded-full border-2" />
                                         <div className="flex flex-col justify-center items-start mx-2">
                                             <p className="text-sm font-bold">
-                                                {process.env.NAME}
+                                                {siteConfig.name}
                                             </p>
                                             <p className="text-xs text-neutral-500">
-                                                {process.env.DESCRIPTION}
+                                                {siteConfig.description}
                                             </p>
                                         </div>
                                     </Link>
@@ -68,7 +69,7 @@ export function Header({ children }: { children?: React.ReactNode }) {
             </div>
             <div className="h-20"></div>
         </>
-    ), [profile, children])
+    ), [profile, children, siteConfig])
 }
 
 function NavItem({ menu, title, selected, href, when = true, onClick }: {
@@ -136,7 +137,6 @@ function Menu() {
 }
 
 function NavBar({ menu, onClick }: { menu: boolean, onClick?: () => void }) {
-    const profile = useContext(ProfileContext);
     const [location] = useLocation();
     const { t } = useTranslation()
     return (
@@ -146,13 +146,8 @@ function NavBar({ menu, onClick }: { menu: boolean, onClick?: () => void }) {
             <NavItem menu={menu} onClick={onClick} title={t('timeline')} selected={location === "/timeline"} href="/timeline" />
             <NavItem menu={menu} onClick={onClick} title={t('moments.title')} selected={location === "/moments"} href="/moments" />
             <NavItem menu={menu} onClick={onClick} title={t('hashtags')} selected={location === "/hashtags"} href="/hashtags" />
-            <NavItem menu={menu} onClick={onClick} when={profile?.permission == true} title={t('writing')}
-                selected={location.startsWith("/writing")} href="/writing" />
             <NavItem menu={menu} onClick={onClick} title={t('friends.title')} selected={location === "/friends"} href="/friends" />
             <NavItem menu={menu} onClick={onClick} title={t('about.title')} selected={location === "/about"} href="/about" />
-            <NavItem menu={menu} onClick={onClick} when={profile?.permission == true} title={t('settings.title')}
-                selected={location === "/settings"}
-                href="/settings" />
         </>
     )
 }
@@ -257,27 +252,71 @@ function UserAvatar({ className, profile }: { className?: string, profile?: Prof
     const [, setLocation] = useLocation()
     const label = t('github_login')
     const config = useContext(ClientConfigContext);
+    const [isOpen, setIsOpen] = useState(false);
 
     return (
         <> {config.get<boolean>('login.enabled') && <div className={className + " flex flex-row items-center"}>
             {profile ? <>
-                <div className="w-8 relative group">
-                    {profile.avatar ? (
-                        <img src={profile.avatar} alt="Avatar" className="w-8 h-8 rounded-full border cursor-pointer" onClick={() => setLocation('/profile')} />
-                    ) : (
-                        <div className="w-8 h-8 rounded-full border cursor-pointer bg-secondary flex items-center justify-center" onClick={() => setLocation('/profile')}>
-                            <i className="ri-user-line text-lg t-secondary"></i>
-                        </div>
-                    )}
-                    <div className="z-50 absolute left-0 top-0 w-10 h-8 opacity-0 group-hover:opacity-100 duration-300 flex flex-row gap-1">
-                        <IconSmall label={t('profile.title')} name="ri-user-settings-line" onClick={() => setLocation('/profile')} hover={false} />
-                        <IconSmall label={t('logout')} name="ri-logout-circle-line" onClick={async () => {
-                            await client.user.logout()
-                            removeAuthToken()
-                            window.location.reload()
-                        }} hover={false} />
+                <Popup
+                    arrow={false}
+                    position="bottom right"
+                    closeOnDocumentClick
+                    open={isOpen}
+                    onOpen={() => setIsOpen(true)}
+                    onClose={() => setIsOpen(false)}
+                    trigger={
+                        <button
+                            title={t('profile.title')}
+                            aria-label={t('profile.title')}
+                            className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full border border-black/10 bg-w dark:border-white/10"
+                        >
+                            {profile.avatar ? (
+                                <img src={profile.avatar} alt="Avatar" className="h-8 w-8 cursor-pointer rounded-full object-cover" />
+                            ) : (
+                                <div className="flex h-8 w-8 cursor-pointer items-center justify-center bg-secondary">
+                                    <i className="ri-user-line text-lg t-secondary"></i>
+                                </div>
+                            )}
+                        </button>
+                    }
+                >
+                    <div className="mt-3 flex min-w-44 flex-col rounded-xl border border-black/10 bg-w p-2 shadow-lg dark:border-white/10">
+                        {profile.permission && (
+                            <button
+                                onClick={() => {
+                                    setIsOpen(false);
+                                    setLocation('/admin/writing');
+                                }}
+                                className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm t-primary transition-colors hover:bg-neutral-50 dark:hover:bg-white/5"
+                            >
+                                <i className="ri-dashboard-line" />
+                                <span>{t('admin.title')}</span>
+                            </button>
+                        )}
+                        <button
+                            onClick={() => {
+                                setIsOpen(false);
+                                setLocation('/profile');
+                            }}
+                            className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm t-primary transition-colors hover:bg-neutral-50 dark:hover:bg-white/5"
+                        >
+                            <i className="ri-user-settings-line" />
+                            <span>{t('profile.title')}</span>
+                        </button>
+                        <button
+                            onClick={async () => {
+                                setIsOpen(false);
+                                await client.user.logout()
+                                removeAuthToken()
+                                window.location.reload()
+                            }}
+                            className="flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-rose-600 transition-colors hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                        >
+                            <i className="ri-logout-circle-line" />
+                            <span>{t('logout')}</span>
+                        </button>
                     </div>
-                </div>
+                </Popup>
             </> : <>
                 <button onClick={() => setLocation('/login')} title={label} aria-label={label}
                     className="flex rounded-full border dark:border-neutral-600 px-2 bg-w aspect-[1] items-center justify-center t-primary bg-button">

@@ -41,29 +41,21 @@ jobs:
       # Save build metadata for deploy workflow
       - name: Save build metadata
         run: |
+          DEPLOY_SCRIPT_HASH=$(cat ./cli/src/tasks/deploy-cf.ts ./cli/src/lib/db-migration.ts | sha256sum | awk '{print $1}')
           mkdir -p ./build-meta
           echo "${{ github.event_name }}" > ./build-meta/event_name
           echo "${{ github.ref }}" > ./build-meta/ref
+          echo "${{ github.repository }}" > ./build-meta/repository
           echo "${{ github.event.number || '0' }}" > ./build-meta/pr_number
           echo "${{ github.sha }}" > ./build-meta/sha
           echo "${{ github.event.pull_request.head.sha || github.sha }}" > ./build-meta/head_sha
+          echo "$DEPLOY_SCRIPT_HASH" > ./build-meta/deploy_script_hash
 
-      # Build client with production environment variables (must be before server build)
-      - name: Build client for production
-        env:
-          NAME: ${{ vars.NAME || 'Rin' }}
-          DESCRIPTION: ${{ vars.DESCRIPTION || 'A lightweight personal blogging system' }}
-          AVATAR: ${{ vars.AVATAR || '' }}
-          PAGE_SIZE: ${{ vars.PAGE_SIZE || '5' }}
-          RSS_ENABLE: ${{ vars.RSS_ENABLE || 'false' }}
+      # Build client (no env vars needed, config is fetched from server at runtime)
+      # Note: vite.config.ts builds directly to ../dist/client
+      - name: Build client
         run: |
-          mkdir -p ./dist/client
           cd client
-          echo "NAME=${NAME}" > .env.production
-          echo "DESCRIPTION=${DESCRIPTION}" >> .env.production
-          echo "AVATAR=${AVATAR}" >> .env.production
-          echo "PAGE_SIZE=${PAGE_SIZE}" >> .env.production
-          echo "RSS_ENABLE=${RSS_ENABLE}" >> .env.production
           bun run build
           cd ..
 
@@ -77,8 +69,8 @@ jobs:
       # Note: Must run from root dir where wrangler.toml exists
       - name: Build server
         run: |
-          bunx wrangler deploy --dry-run --outdir=server/dist
-          ls -la ./server/dist/ || echo "Server dist not found"
+          mkdir -p ./dist/server
+          bunx wrangler deploy --dry-run --outdir=dist/server
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -86,6 +78,6 @@ jobs:
           name: build-${{ github.run_id }}
           path: |
             ./dist
-            ./server/dist
             ./build-meta
+            ./server/sql
           retention-days: 1
