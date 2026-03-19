@@ -6,6 +6,7 @@ import { timing } from 'hono/timing';
 import { eq } from 'drizzle-orm';
 import * as schema from '../../src/db/schema';
 import type { Variables, JWTUtils, OAuth2Utils, CacheImpl } from '../../src/core/hono-types';
+import { profileAsync } from '../../src/core/server-timing';
 import { users } from '../../src/db/schema';
 
 /**
@@ -200,12 +201,43 @@ export function cleanupTestDB(sqlite: Database) {
  */
 export class TestCacheImpl implements CacheImpl {
     private data = new Map<string, any>();
+    private clientConfig?: TestCacheImpl;
+
+    constructor(clientConfig?: TestCacheImpl) {
+        this.clientConfig = clientConfig;
+    }
+
+    private async isEnabled() {
+        if (!this.clientConfig) {
+            return true;
+        }
+
+        const value = await this.clientConfig.getOrDefault<unknown>("cache.enabled", false);
+        if (typeof value === "boolean") {
+            return value;
+        }
+        if (typeof value === "string") {
+            const normalized = value.trim().toLowerCase();
+            if (normalized === "true") return true;
+            if (normalized === "false") return false;
+        }
+        if (typeof value === "number") {
+            return value !== 0;
+        }
+        return Boolean(value);
+    }
 
     async get(key: string): Promise<any | null> {
+        if (!(await this.isEnabled())) {
+            return null;
+        }
         return this.data.get(key) ?? null;
     }
 
     async set(key: string, value: any, _save?: boolean): Promise<void> {
+        if (!(await this.isEnabled())) {
+            return;
+        }
         this.data.set(key, value);
     }
 
@@ -222,6 +254,9 @@ export class TestCacheImpl implements CacheImpl {
     }
 
     async getOrSet<T>(key: string, factory: () => Promise<T>): Promise<T> {
+        if (!(await this.isEnabled())) {
+            return factory();
+        }
         const cached = await this.get(key);
         if (cached !== null) return cached;
         const value = await factory();
@@ -230,15 +265,24 @@ export class TestCacheImpl implements CacheImpl {
     }
 
     async getOrDefault<T>(key: string, defaultValue: T): Promise<T> {
+        if (!(await this.isEnabled())) {
+            return defaultValue;
+        }
         const cached = await this.get(key);
         return cached !== null ? cached : defaultValue;
     }
 
     async getBySuffix(_suffix: string): Promise<any[]> {
+        if (!(await this.isEnabled())) {
+            return [];
+        }
         return [];
     }
 
     async all(): Promise<Map<string, any>> {
+        if (!(await this.isEnabled())) {
+            return new Map<string, any>();
+        }
         return new Map(this.data);
     }
 
@@ -257,6 +301,9 @@ export interface TestContext {
     sqlite: Database;
     env: Env;
     app: Hono<{ Bindings: Env; Variables: Variables }>;
+    cache: TestCacheImpl;
+    serverConfig: TestCacheImpl;
+    clientConfig: TestCacheImpl;
 }
 
 /**
@@ -274,54 +321,70 @@ export async function setupTestApp(
     const db = mockDB.db;
     const sqlite = mockDB.sqlite;
     const env = createMockEnv(envOverrides);
+    const serverConfig = new TestCacheImpl();
+    const clientConfig = new TestCacheImpl();
+    const cache = new TestCacheImpl(clientConfig);
 
     const app = new Hono<{ Bindings: Env; Variables: Variables }>();
-    app.use('*', timing());
+    app.use('*', timing({ totalDescription: '' }));
 
     // Mock middleware to inject dependencies and handle auth
     app.use(createMiddleware<{ Bindings: Env; Variables: Variables }>(async (c, next) => {
-        const serverConfig = new TestCacheImpl();
-        const jwt: JWTUtils = {
-            sign: async (payload: any) => `mock_token_${payload.id}`,
-            verify: async (token: string) => {
-                const match = token.match(/mock_token_(\d+)/);
-                return match ? { id: parseInt(match[1]) } : null;
-            },
-        };
+        await profileAsync(c, 'init_container', async () => {
+            const jwt: JWTUtils = {
+                sign: async (payload: any) => `mock_token_${payload.id}`,
+                verify: async (token: string) => {
+                    const match = token.match(/mock_token_(\d+)/);
+                    return match ? { id: parseInt(match[1]) } : null;
+                },
+            };
 
-        const oauth2: OAuth2Utils = {
-            generateState: () => 'mock_state',
-            createRedirectUrl: (state: string, provider: string) => `https://github.com/login?state=${state}`,
-            authorize: async (provider: string, code: string) => code === 'valid_code' ? { accessToken: 'gh_token' } : null,
-        };
+            const oauth2: OAuth2Utils = {
+                generateState: () => 'mock_state',
+                createRedirectUrl: (state: string, provider: string) => `https://github.com/login?state=${state}`,
+                authorize: async (provider: string, code: string) => code === 'valid_code' ? { accessToken: 'gh_token' } : null,
+            };
 
-        c.set('db', db as any);
-        c.set('cache', new TestCacheImpl());
-        c.set('serverConfig', serverConfig);
-        c.set('clientConfig', new TestCacheImpl());
-        c.set('jwt', jwt);
-        c.set('oauth2', oauth2);
-        c.set('env', env);
+            c.set('db', db as any);
+            c.set('cache', cache);
+            c.set('serverConfig', serverConfig);
+            c.set('clientConfig', clientConfig);
+            c.set('jwt', jwt);
+            c.set('oauth2', oauth2);
+            c.set('env', env);
+        });
 
-        // Parse Authorization header and set user info
-        const authHeader = c.req.header('authorization');
+        const jwt = c.get('jwt');
         let uid: number | undefined = undefined;
         let admin = false;
 
-        if (authHeader?.startsWith('Bearer ')) {
-            const token = authHeader.substring(7);
-            const profile = await jwt.verify(token);
-            if (profile?.id) {
-                uid = profile.id;
-                // Look up user in database to check permission
-                const user = await db.query.users.findFirst({
-                    where: eq(users.id, uid as number)
-                });
-                if (user) {
-                    admin = user.permission === 1;
+        await profileAsync(c, 'auth_middleware', async () => {
+            const token = await profileAsync(c, 'auth_token', () => {
+                const authHeader = c.req.header('authorization');
+                if (!authHeader?.startsWith('Bearer ')) {
+                    return undefined;
                 }
+                return authHeader.substring(7);
+            });
+
+            if (!token) {
+                return;
             }
-        }
+
+            const profile = await profileAsync(c, 'auth_verify', () => jwt.verify(token));
+            if (!profile?.id) {
+                return;
+            }
+
+            uid = profile.id;
+            const user = await profileAsync(c, 'auth_user_lookup', () => db.query.users.findFirst({
+                where: eq(users.id, uid as number)
+            }));
+
+            if (user) {
+                admin = user.permission === 1;
+            }
+        });
 
         c.set('uid', uid);
         c.set('admin', admin);
@@ -332,7 +395,7 @@ export async function setupTestApp(
     // Mount service
     app.route('/', serviceFactory());
 
-    return { db, sqlite, env, app };
+    return { db, sqlite, env, app, cache, serverConfig, clientConfig };
 }
 
 /**

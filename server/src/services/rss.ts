@@ -1,10 +1,11 @@
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import type { AppContext } from "../core/hono-types";
+import { profileAsync } from "../core/server-timing";
 import { feeds, users } from "../db/schema";
 import { extractImage } from "../utils/image";
 import { path_join } from "../utils/path";
-import { createS3Client, putObject } from "../utils/s3";
+import { getStorageObject, getStoragePublicUrl, headStorageObject, putStorageObjectAtKey } from "../utils/storage";
 import { FAVICON_ALLOWED_TYPES, getFaviconKey } from "./favicon";
 import type { DB } from "../core/hono-types";
 
@@ -71,10 +72,7 @@ async function handleFeed(c: AppContext, fileName: string) {
     const env = c.get('env');
     const db = c.get('db');
 
-    const endpoint = env.S3_ENDPOINT;
-    const accessHost = env.S3_ACCESS_HOST || endpoint;
     const folder = env.S3_CACHE_FOLDER || 'cache/';
-    const host = `${(accessHost.startsWith("http://") || accessHost.startsWith("https://") ? '' : 'https://')}${accessHost}`;
 
     // Map file extensions to proper MIME types
     const contentTypeMap: Record<string, string> = {
@@ -87,62 +85,42 @@ async function handleFeed(c: AppContext, fileName: string) {
 
     // Try to fetch from S3 first (if configured)
     const key = path_join(folder, fileName);
-    const cleanHost = host.endsWith('/') ? host.slice(0, -1) : host;
-    const url = `${cleanHost}/${key}`;
     
-    // Check if S3 is properly configured (not default/placeholder values)
-    const s3Configured = host && 
-                       !host.includes('your-') && 
-                       !host.includes('undefined') &&
-                       env.S3_BUCKET && 
-                       !env.S3_BUCKET.includes('your-bucket');
-    
-    if (s3Configured) {
-        try {
-            console.log(`[RSS] Fetching from S3: ${url}`);
-            const response = await fetch(url, { 
-                cf: { cacheTtl: 60 } 
+    try {
+        const response = await profileAsync(c, 'rss_s3_fetch', () => getStorageObject(env, key));
+
+        if (response) {
+            console.log(`[RSS] Storage hit for ${key}`);
+            const text = await profileAsync(c, 'rss_s3_body', () => response.text());
+            return c.text(text, 200, {
+                'Content-Type': contentType,
+                'Cache-Control': 'public, max-age=3600',
             });
-            
-            if (response.ok) {
-                console.log(`[RSS] S3 hit!`);
-                const text = await response.text();
-                return c.text(text, 200, {
-                    'Content-Type': contentType,
-                    'Cache-Control': 'public, max-age=3600',
-                });
-            }
-            
-            if (response.status !== 404) {
-                console.log(`[RSS] S3 error: ${response.status}, falling back to generation`);
-            }
-        } catch (e: any) {
-            console.log(`[RSS] S3 fetch failed: ${e.message}, falling back to generation`);
         }
-    } else {
-        console.log(`[RSS] S3 not configured, generating feed in real-time`);
+    } catch (e: any) {
+        console.log(`[RSS] Storage fetch failed: ${e.message}, falling back to generation`);
     }
     
     // Generate feed in real-time (fallback or primary mode)
     try {
         console.log(`[RSS] Generating ${fileName} in real-time...`);
         const frontendUrl = new URL(c.req.url).origin;
-        const feed = await generateFeed(env, db, frontendUrl);
+        const feed = await profileAsync(c, 'rss_generate_feed', () => generateFeed(env, db, frontendUrl, c));
         
         let content: string;
         switch (fileName) {
             case 'rss.xml':
-                content = feed.rss2();
+                content = await profileAsync(c, 'rss_render_rss2', () => Promise.resolve(feed.rss2()));
                 break;
             case 'atom.xml':
-                content = feed.atom1();
+                content = await profileAsync(c, 'rss_render_atom', () => Promise.resolve(feed.atom1()));
                 break;
             case 'rss.json':
             case 'feed.json':
-                content = feed.json1();
+                content = await profileAsync(c, 'rss_render_json', () => Promise.resolve(feed.json1()));
                 break;
             default:
-                content = feed.rss2();
+                content = await profileAsync(c, 'rss_render_default', () => Promise.resolve(feed.rss2()));
         }
         
         return c.text(content, 200, {
@@ -156,10 +134,14 @@ async function handleFeed(c: AppContext, fileName: string) {
 }
 
 // Extract feed generation logic for reuse
-async function generateFeed(env: Env, db: DB, frontendUrl: string) {
-    await initRSSModules();
-    const accessHost = env.S3_ACCESS_HOST || env.S3_ENDPOINT;
+async function generateFeed(env: Env, db: DB, frontendUrl: string, c?: AppContext) {
+    if (c) {
+        await profileAsync(c, 'rss_init_modules', () => initRSSModules());
+    } else {
+        await initRSSModules();
+    }
     const faviconKey = getFaviconKey(env);
+    const publicBaseUrl = frontendUrl || undefined;
 
     let feedConfig: any = {
         title: env.RSS_TITLE,
@@ -178,39 +160,52 @@ async function generateFeed(env: Env, db: DB, frontendUrl: string) {
     };
 
     if (!feedConfig.title) {
-        const user = await db.query.users.findFirst({ where: eq(users.id, 1) });
+        const user = c
+            ? await profileAsync(c, 'rss_user_lookup', () => db.query.users.findFirst({ where: eq(users.id, 1) }))
+            : await db.query.users.findFirst({ where: eq(users.id, 1) });
         if (user) {
             feedConfig.title = user.username;
         }
     }
 
-    // Try to get favicon from S3
-    if (accessHost && !accessHost.includes('your-') && !accessHost.includes('undefined')) {
-        for (const [_mimeType, ext] of Object.entries(FAVICON_ALLOWED_TYPES)) {
-            const originFaviconKey = path_join(env.S3_FOLDER || "", `originFavicon${ext}`);
-            try {
-                const response = await fetch(new Request(`${accessHost}/${originFaviconKey}`));
-                if (response.ok) {
-                    feedConfig.image = `${accessHost}/${originFaviconKey}`;
-                    break;
-                }
-            } catch (error) {
-                continue;
-            }
-        }
-
+    // Try to discover stored favicon assets.
+    for (const [_mimeType, ext] of Object.entries(FAVICON_ALLOWED_TYPES)) {
+        const originFaviconKey = path_join(env.S3_FOLDER || "", `originFavicon${ext}`);
         try {
-            const response = await fetch(new Request(`${accessHost}/${faviconKey}`));
-            if (response.ok) {
-                feedConfig.favicon = `${accessHost}/${faviconKey}`;
+            const response = c
+                ? await profileAsync(c, 'rss_origin_favicon_fetch', () => headStorageObject(env, originFaviconKey))
+                : await headStorageObject(env, originFaviconKey);
+            if (response) {
+                feedConfig.image = getStoragePublicUrl(env, originFaviconKey, publicBaseUrl);
+                break;
             }
-        } catch (error) { }
+        } catch (error) {
+            continue;
+        }
     }
+
+    try {
+        const response = c
+            ? await profileAsync(c, 'rss_favicon_fetch', () => headStorageObject(env, faviconKey))
+            : await headStorageObject(env, faviconKey);
+        if (response) {
+            feedConfig.favicon = getStoragePublicUrl(env, faviconKey, publicBaseUrl);
+        }
+    } catch (error) { }
 
     const feed = new Feed(feedConfig);
 
     // Get published feeds
-    const feed_list = await db.query.feeds.findMany({
+    const feed_list = c
+        ? await profileAsync(c, 'rss_feed_list', () => db.query.feeds.findMany({
+            where: and(eq(feeds.draft, 0), eq(feeds.listed, 1)),
+            orderBy: [desc(feeds.createdAt), desc(feeds.updatedAt)],
+            limit: 20,
+            with: {
+                user: { columns: { id: true, username: true, avatar: true } },
+            },
+        }))
+        : await db.query.feeds.findMany({
         where: and(eq(feeds.draft, 0), eq(feeds.listed, 1)),
         orderBy: [desc(feeds.createdAt), desc(feeds.updatedAt)],
         limit: 20,
@@ -267,13 +262,11 @@ export async function rssCrontab(env: Env, db: DB) {
     
     // Save to S3 (if configured)
     const folder = env.S3_CACHE_FOLDER || "cache/";
-    const s3 = createS3Client(env);
 
     async function save(name: string, data: string) {
         const hashkey = path_join(folder, name);
         try {
-            await putObject(
-                s3,
+            await putStorageObjectAtKey(
                 env,
                 hashkey,
                 data,

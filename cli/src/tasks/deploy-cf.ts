@@ -87,6 +87,45 @@ export function buildR2BucketInfo(r2BucketName: string, accountId: string): R2Bu
   };
 }
 
+export function buildWranglerTriggersConfig(preview = false) {
+  return preview
+    ? ""
+    : stripIndent(`
+        [triggers]
+        crons = ["*/20 * * * *"]
+      `);
+}
+
+export function buildWranglerQueueConfig(taskQueueName: string, preview = false) {
+  return stripIndent(`
+    [[queues.producers]]
+    binding = "TASK_QUEUE"
+    queue = "${taskQueueName}"
+
+    [[queues.consumers]]
+    queue = "${taskQueueName}"
+    max_batch_size = 1
+    max_batch_timeout = 5
+  `);
+}
+
+export function buildWranglerObservabilityConfig(preview = false) {
+  if (!preview) {
+    return "";
+  }
+
+  return stripIndent(`
+    [observability]
+
+    [observability.logs]
+    enabled = true
+    invocation_logs = true
+
+    [observability.traces]
+    enabled = false
+  `);
+}
+
 async function resolveR2BucketInfo(r2BucketName: string) {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
   if (!accountId) return null;
@@ -96,7 +135,7 @@ async function resolveR2BucketInfo(r2BucketName: string) {
   return buildR2BucketInfo(r2BucketName, accountId);
 }
 
-export async function runCloudflareDeploy(target: "all" | "server" | "client" = "all") {
+export async function runCloudflareDeploy(target: "all" | "server" | "client" = "all", preview = false) {
   if (target === "client") {
     await buildClient();
     await $`${bunExec} x wrangler pages deploy dist/client`;
@@ -105,10 +144,10 @@ export async function runCloudflareDeploy(target: "all" | "server" | "client" = 
 
   const dbName = renv("DB_NAME", "rin");
   const workerName = renv("WORKER_NAME", "rin-server");
-  const taskQueueName = env("TASK_QUEUE_NAME", env("AI_SUMMARY_QUEUE_NAME", `${workerName}-tasks`));
+  const taskQueueName = env("TASK_QUEUE_NAME", env("AI_SUMMARY_QUEUE_NAME", `${workerName}-tasks`)) ?? `${workerName}-tasks`;
   const r2BucketName = env("R2_BUCKET_NAME", "");
   const s3Endpoint = env("S3_ENDPOINT", "");
-  const s3AccessHost = env("S3_ACCESS_HOST", s3Endpoint);
+  const s3AccessHost = env("S3_ACCESS_HOST", "");
   const s3Bucket = env("S3_BUCKET", "");
   const s3CacheFolder = renv("S3_CACHE_FOLDER", "cache/");
   const s3Folder = renv("S3_FOLDER", "images/");
@@ -128,12 +167,11 @@ export async function runCloudflareDeploy(target: "all" | "server" | "client" = 
   let finalS3Bucket = s3Bucket;
   let finalS3AccessHost = s3AccessHost;
 
-  if (!finalS3Endpoint || !finalS3Bucket || !finalS3AccessHost) {
+  if (!finalS3Endpoint || !finalS3Bucket) {
     const r2Info = await resolveR2BucketInfo(r2BucketName || "");
     if (r2Info) {
       finalS3Endpoint ||= r2Info.endpoint;
       finalS3Bucket ||= r2Info.name;
-      finalS3AccessHost ||= r2Info.accessHost;
     }
   }
 
@@ -156,9 +194,8 @@ export async function runCloudflareDeploy(target: "all" | "server" | "client" = 
       [assets]
       directory = "./dist/client"
       binding = "ASSETS"
-
-      [triggers]
-      crons = ["*/20 * * * *"]
+      ${buildWranglerTriggersConfig(preview)}
+      ${buildWranglerObservabilityConfig(preview)}
 
       [vars]
       S3_FOLDER = "${s3Folder}"
@@ -216,16 +253,7 @@ export async function runCloudflareDeploy(target: "all" | "server" | "client" = 
     binding = "AI"
   `)} >> wrangler.toml`.quiet();
 
-  await $`echo ${stripIndent(`
-    [[queues.producers]]
-    binding = "TASK_QUEUE"
-    queue = "${taskQueueName}"
-
-    [[queues.consumers]]
-    queue = "${taskQueueName}"
-    max_batch_size = 1
-    max_batch_timeout = 5
-  `)} >> wrangler.toml`.quiet();
+  await $`echo ${buildWranglerQueueConfig(taskQueueName, preview)} >> wrangler.toml`.quiet();
 
   if (r2BucketName) {
     await $`echo ${stripIndent(`

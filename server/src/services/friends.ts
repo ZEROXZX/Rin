@@ -1,11 +1,11 @@
 import { eq } from "drizzle-orm";
 import { Hono } from "hono";
-import type { AppContext, DB } from "../core/hono-types";
+import type { AppContext, CacheImpl, DB } from "../core/hono-types";
+import { profileAsync } from "../core/server-timing";
 import * as schema from "../db/schema";
 import { friends } from "../db/schema";
-import type { CacheImpl } from "../utils/cache";
-import { WEBHOOK_URL_KEY } from "../utils/config";
 import { notify } from "../utils/webhook";
+import { resolveWebhookConfig } from "./config-helpers";
 
 export function FriendService(): Hono {
     const app = new Hono();
@@ -16,7 +16,7 @@ export function FriendService(): Hono {
         const uid = c.get('uid');
         const db = c.get('db');
         
-        const friend_list = await (admin
+        const friend_list = await profileAsync(c, 'friend_list_db', () => (admin
             ? db.query.friends.findMany({
                 orderBy: (friends: any, { asc, desc }: { asc: any, desc: any }) => [
                     desc(friends.sort_order), 
@@ -29,9 +29,9 @@ export function FriendService(): Hono {
                     desc(friends.sort_order), 
                     asc(friends.createdAt)
                 ]
-            }));
+            })));
             
-        const apply_list = uid ? await db.query.friends.findFirst({ where: eq(friends.uid, uid) }) : null;
+        const apply_list = uid ? await profileAsync(c, 'friend_apply_lookup', () => db.query.friends.findFirst({ where: eq(friends.uid, uid) })) : null;
         return c.json({ friend_list, apply_list });
     });
 
@@ -44,10 +44,10 @@ export function FriendService(): Hono {
         const env = c.get('env');
         const clientConfig = c.get('clientConfig');
         const serverConfig = c.get('serverConfig');
-        const body = await c.req.json();
+        const body = await profileAsync(c, 'friend_create_parse', () => c.req.json());
         const { name, desc, avatar, url } = body;
         
-        const enable = await clientConfig.getOrDefault('friend_apply_enable', true);
+        const enable = await profileAsync(c, 'friend_create_config', () => clientConfig.getOrDefault('friend_apply_enable', true));
         if (!enable && !admin) {
             return c.text('Friend Link Apply Disabled', 403);
         }
@@ -65,27 +65,29 @@ export function FriendService(): Hono {
         }
         
         if (!admin) {
-            const exist = await db.query.friends.findFirst({ where: eq(friends.uid, uid) });
+            const exist = await profileAsync(c, 'friend_create_existing', () => db.query.friends.findFirst({ where: eq(friends.uid, uid) }));
             if (exist) {
                 return c.text('Already sent', 400);
             }
         }
         
         const accepted = admin ? 1 : 0;
-        await db.insert(friends).values({
+        await profileAsync(c, 'friend_create_insert', () => db.insert(friends).values({
             name, desc, avatar, url, uid: uid, accepted
-        });
+        }));
 
         if (!admin) {
-            const webhookUrl = await serverConfig.get(WEBHOOK_URL_KEY) || env.WEBHOOK_URL;
-            const webhookMethod = await serverConfig.get("webhook.method") as string | undefined;
-            const webhookContentType = await serverConfig.get("webhook.content_type") as string | undefined;
-            const webhookHeaders = await serverConfig.get("webhook.headers") as string | undefined;
-            const webhookBodyTemplate = await serverConfig.get("webhook.body_template") as string | undefined;
+            const {
+                webhookUrl,
+                webhookMethod,
+                webhookContentType,
+                webhookHeaders,
+                webhookBodyTemplate,
+            } = await profileAsync(c, 'friend_create_webhook_config', () => resolveWebhookConfig(serverConfig, env));
             const frontendUrl = new URL(c.req.url).origin;
             const content = `${frontendUrl}/friends\n${username} 申请友链: ${name}\n${desc}\n${url}`;
-            await notify(
-                webhookUrl,
+            await profileAsync(c, 'friend_create_notify', () => notify(
+                webhookUrl || "",
                 {
                     event: "friend.created",
                     message: content,
@@ -101,7 +103,7 @@ export function FriendService(): Hono {
                     headers: webhookHeaders,
                     bodyTemplate: webhookBodyTemplate,
                 },
-            );
+            ));
         }
         return c.text('OK');
     });
@@ -116,10 +118,10 @@ export function FriendService(): Hono {
         const clientConfig = c.get('clientConfig');
         const serverConfig = c.get('serverConfig');
         const id = c.req.param('id');
-        const body = await c.req.json();
+        const body = await profileAsync(c, 'friend_update_parse', () => c.req.json());
         const { name, desc, avatar, url, accepted, sort_order } = body;
         
-        const enable = await clientConfig.getOrDefault('friend_apply_enable', true);
+        const enable = await profileAsync(c, 'friend_update_config', () => clientConfig.getOrDefault('friend_apply_enable', true));
         if (!enable && !admin) {
             return c.text('Friend Link Apply Disabled', 403);
         }
@@ -128,7 +130,7 @@ export function FriendService(): Hono {
             return c.text('Unauthorized', 401);
         }
         
-        const exist = await db.query.friends.findFirst({ where: eq(friends.id, parseInt(id)) });
+        const exist = await profileAsync(c, 'friend_update_lookup', () => db.query.friends.findFirst({ where: eq(friends.id, parseInt(id)) }));
         if (!exist) {
             return c.text('Not found', 404);
         }
@@ -149,25 +151,27 @@ export function FriendService(): Hono {
             return s ? s.length === 0 ? undefined : s : undefined;
         }
         
-        await db.update(friends).set({
+        await profileAsync(c, 'friend_update_db', () => db.update(friends).set({
             name: wrap(name),
             desc: wrap(desc),
             avatar: wrap(avatar),
             url: wrap(url),
             accepted: finalAccepted === undefined ? undefined : finalAccepted,
             sort_order: finalSortOrder === undefined ? undefined : finalSortOrder,
-        }).where(eq(friends.id, parseInt(id)));
+        }).where(eq(friends.id, parseInt(id))));
         
         if (!admin) {
-            const webhookUrl = await serverConfig.get(WEBHOOK_URL_KEY) || env.WEBHOOK_URL;
-            const webhookMethod = await serverConfig.get("webhook.method") as string | undefined;
-            const webhookContentType = await serverConfig.get("webhook.content_type") as string | undefined;
-            const webhookHeaders = await serverConfig.get("webhook.headers") as string | undefined;
-            const webhookBodyTemplate = await serverConfig.get("webhook.body_template") as string | undefined;
+            const {
+                webhookUrl,
+                webhookMethod,
+                webhookContentType,
+                webhookHeaders,
+                webhookBodyTemplate,
+            } = await profileAsync(c, 'friend_update_webhook_config', () => resolveWebhookConfig(serverConfig, env));
             const frontendUrl = new URL(c.req.url).origin;
             const content = `${frontendUrl}/friends\n${username} 更新友链: ${name}\n${desc}\n${url}`;
-            await notify(
-                webhookUrl,
+            await profileAsync(c, 'friend_update_notify', () => notify(
+                webhookUrl || "",
                 {
                     event: "friend.updated",
                     message: content,
@@ -183,7 +187,7 @@ export function FriendService(): Hono {
                     headers: webhookHeaders,
                     bodyTemplate: webhookBodyTemplate,
                 },
-            );
+            ));
         }
         return c.text('OK');
     });
@@ -199,7 +203,7 @@ export function FriendService(): Hono {
             return c.text('Unauthorized', 401);
         }
         
-        const exist = await db.query.friends.findFirst({ where: eq(friends.id, parseInt(id)) });
+        const exist = await profileAsync(c, 'friend_delete_lookup', () => db.query.friends.findFirst({ where: eq(friends.id, parseInt(id)) }));
         if (!exist) {
             return c.text('Not found', 404);
         }
@@ -208,7 +212,7 @@ export function FriendService(): Hono {
             return c.text('Permission denied', 403);
         }
         
-        await db.delete(friends).where(eq(friends.id, parseInt(id)));
+        await profileAsync(c, 'friend_delete_db', () => db.delete(friends).where(eq(friends.id, parseInt(id))));
         return c.text('OK');
     });
 

@@ -11,7 +11,9 @@ export async function handleQueue(
 ) {
   const schema = await import("../db/schema");
   const db = drizzle(env.DB, { schema });
-  const cache = new CacheImpl(db, env, "cache");
+  const serverConfig = new CacheImpl(db, env, "server.config", "database");
+  const clientConfig = new CacheImpl(db, env, "client.config", "database");
+  const cache = new CacheImpl(db, env, "cache", undefined, clientConfig);
 
   for (const message of batch.messages) {
     const body = message.body;
@@ -26,6 +28,7 @@ export async function handleQueue(
           env,
           db,
           cache,
+          serverConfig,
           body.payload,
           clearFeedCache,
         );

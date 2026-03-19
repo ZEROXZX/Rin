@@ -1,7 +1,8 @@
 import { Hono } from "hono";
 import type { AppContext } from "../core/hono-types";
+import { profileAsync } from "../core/server-timing";
 import { path_join } from "../utils/path";
-import { createS3Client, putObject } from "../utils/s3";
+import { getStorageObject, getStoragePublicUrl, putStorageObjectAtKey } from "../utils/storage";
 
 // @see https://developers.cloudflare.com/images/url-format#supported-formats-and-limitations
 export const FAVICON_ALLOWED_TYPES: { [key: string]: string } = {
@@ -17,7 +18,6 @@ export function getFaviconKey(env: Env) {
 
 async function buildFaviconFromSource(c: AppContext, sourceUrl: string, faviconKey: string) {
     const env = c.get('env');
-    const s3 = createS3Client(env);
     const imageRequest = new Request(sourceUrl, {
         headers: c.req.raw.headers,
     });
@@ -39,8 +39,7 @@ async function buildFaviconFromSource(c: AppContext, sourceUrl: string, faviconK
     }
 
     const arrayBuffer = await response.arrayBuffer();
-    await putObject(
-        s3,
+    await putStorageObjectAtKey(
         env,
         faviconKey,
         new Uint8Array(arrayBuffer),
@@ -63,21 +62,20 @@ export function FaviconService(): Hono {
     app.get("/", async (c: AppContext) => {
         const env = c.get('env');
         const clientConfig = c.get('clientConfig');
-        const accessHost = env.S3_ACCESS_HOST || env.S3_ENDPOINT;
         const faviconKey = getFaviconKey(env);
         
         try {
-            const response = await fetch(new Request(`${accessHost}/${faviconKey}`));
+            const response = await profileAsync(c, 'favicon_fetch', () => getStorageObject(env, faviconKey));
 
-            if (!response.ok) {
-                const avatar = await clientConfig.get("site.avatar") as string | undefined;
+            if (!response) {
+                const avatar = await profileAsync(c, 'favicon_avatar', () => clientConfig.get("site.avatar")) as string | undefined;
                 if (!avatar) {
-                    c.status(response.status as 200 | 400 | 401 | 403 | 404 | 500);
-                    return c.text(await response.text());
+                    c.status(404);
+                    return c.text("Favicon not found");
                 }
 
                 const avatarUrl = new URL(avatar, c.req.url).toString();
-                const generatedFavicon = await buildFaviconFromSource(c, avatarUrl, faviconKey);
+                const generatedFavicon = await profileAsync(c, 'favicon_generate', () => buildFaviconFromSource(c, avatarUrl, faviconKey));
                 if (!generatedFavicon.ok) {
                     c.status(generatedFavicon.status as 200 | 400 | 401 | 403 | 404 | 500);
                     return c.text(await generatedFavicon.text());
@@ -85,13 +83,13 @@ export function FaviconService(): Hono {
 
                 c.header("Content-Type", generatedFavicon.headers.get("Content-Type") || "image/webp");
                 c.header("Cache-Control", generatedFavicon.headers.get("Cache-Control") || "public, max-age=31536000");
-                return c.body(await generatedFavicon.arrayBuffer());
+                return c.body(await profileAsync(c, 'favicon_generate_body', () => generatedFavicon.arrayBuffer()));
             }
 
             c.header("Content-Type", "image/webp");
             c.header("Cache-Control", "public, max-age=31536000");
 
-            return c.body(await response.arrayBuffer());
+            return c.body(await profileAsync(c, 'favicon_body', () => response.arrayBuffer()));
         } catch (error) {
             if (error instanceof Error) {
                 c.status(500);
@@ -104,18 +102,16 @@ export function FaviconService(): Hono {
     // GET /favicon/original
     app.get("/original", async (c: AppContext) => {
         const env = c.get('env');
-        const accessHost = env.S3_ACCESS_HOST || env.S3_ENDPOINT;
         
         try {
-            let originFaviconKey = null;
             for (const [mimeType, ext] of Object.entries(FAVICON_ALLOWED_TYPES)) {
-                originFaviconKey = path_join(env.S3_FOLDER || "", `originFavicon${ext}`);
-                const response = await fetch(new Request(`${accessHost}/${originFaviconKey}`));
+                const originFaviconKey = path_join(env.S3_FOLDER || "", `originFavicon${ext}`);
+                const response = await profileAsync(c, 'favicon_original_fetch', () => getStorageObject(env, originFaviconKey));
 
-                if (response.ok) {
+                if (response) {
                     c.header("Content-Type", mimeType);
                     c.header("Cache-Control", "public, max-age=31536000");
-                    return c.body(await response.arrayBuffer());
+                    return c.body(await profileAsync(c, 'favicon_original_body', () => response.arrayBuffer()));
                 }
             }
 
@@ -134,9 +130,6 @@ export function FaviconService(): Hono {
     app.post("/", async (c: AppContext) => {
         const env = c.get('env');
         const admin = c.get('admin');
-        
-        const s3 = createS3Client(env);
-        const accessHost = env.S3_ACCESS_HOST || env.S3_ENDPOINT;
         const faviconKey = getFaviconKey(env);
         
         try {
@@ -145,7 +138,7 @@ export function FaviconService(): Hono {
                 return c.text("Permission denied");
             }
 
-            const body = await c.req.parseBody();
+            const body = await profileAsync(c, 'favicon_upload_parse', () => c.req.parseBody());
             const file = body.file as File;
             
             if (!file) {
@@ -169,18 +162,18 @@ export function FaviconService(): Hono {
                 `originFavicon${FAVICON_ALLOWED_TYPES[file.type]}`,
             );
 
-            await putObject(
-                s3,
+            await profileAsync(c, 'favicon_origin_put', () => putStorageObjectAtKey(
                 env,
                 originFaviconKey,
                 file
-            );
+            ));
 
-            const imageRequest = new Request(`${accessHost}/${originFaviconKey}`, {
+            const originFaviconUrl = getStoragePublicUrl(env, originFaviconKey, new URL(c.req.url).origin);
+            const imageRequest = new Request(originFaviconUrl, {
                 headers: c.req.raw.headers,
             });
 
-            const response = await fetch(imageRequest, {
+            const response = await profileAsync(c, 'favicon_transform_fetch', () => fetch(imageRequest, {
                 cf: {
                     image: {
                         width: 144,
@@ -190,23 +183,22 @@ export function FaviconService(): Hono {
                         quality: 100,
                     },
                 },
-            });
+            }));
 
             if (!response.ok) {
                 c.status(response.status as 200 | 400 | 401 | 403 | 404 | 500);
                 return c.text(await response.text());
             }
 
-            const arrayBuffer = await response.arrayBuffer();
+            const arrayBuffer = await profileAsync(c, 'favicon_transform_body', () => response.arrayBuffer());
 
-            await putObject(
-                s3,
+            await profileAsync(c, 'favicon_put', () => putStorageObjectAtKey(
                 env,
                 faviconKey,
                 new Uint8Array(arrayBuffer)
-            );
+            ));
 
-            return c.json({ url: `${accessHost}/${faviconKey}` });
+            return c.json({ url: getStoragePublicUrl(env, faviconKey, new URL(c.req.url).origin) });
         } catch (error) {
             if (error instanceof Error) {
                 c.status(500);

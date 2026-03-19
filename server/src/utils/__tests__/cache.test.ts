@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { Database } from 'bun:sqlite';
-import { CacheImpl, createPublicCache, createServerConfig, createClientConfig, type CacheStorageMode } from '../cache';
+import {
+    CacheImpl,
+    createPublicCache,
+    createServerConfig,
+    createClientConfig,
+    type CacheStorageMode,
+} from '../cache';
 import { cache } from '../../db/schema';
 import { eq, and } from 'drizzle-orm';
 import * as schema from '../../db/schema';
@@ -438,6 +444,47 @@ describe('CacheImpl - 存储模式配置测试', () => {
         
         expect(cache).toBeDefined();
     });
+
+    it('应该在 R2 绑定下通过存储 API 读取缓存文件', async () => {
+        mockEnv = createMockEnv('s3');
+        mockEnv.R2_BUCKET = {
+            get: async (key: string) => {
+                if (key !== 'cache/cache.json') {
+                    return null;
+                }
+
+                return {
+                    key,
+                    size: 17,
+                    etag: 'etag',
+                    httpEtag: 'etag',
+                    uploaded: new Date('2025-01-01T00:00:00Z'),
+                    storageClass: 'Standard',
+                    checksums: {} as R2Checksums,
+                    httpMetadata: { contentType: 'application/json' },
+                    writeHttpMetadata(headers: Headers) {
+                        headers.set('Content-Type', 'application/json');
+                    },
+                    body: new Blob(['{"key1":"value1"}']).stream(),
+                    bodyUsed: false,
+                    arrayBuffer: async () => new TextEncoder().encode('{"key1":"value1"}').buffer,
+                    text: async () => '{"key1":"value1"}',
+                    json: async () => ({ key1: 'value1' }),
+                    blob: async () => new Blob(['{"key1":"value1"}']),
+                    bytes: async () => new Uint8Array(new TextEncoder().encode('{"key1":"value1"}')),
+                } as unknown as R2ObjectBody;
+            },
+        } as unknown as R2Bucket;
+        mockEnv.S3_ACCESS_HOST = '' as any;
+        mockEnv.S3_ENDPOINT = '' as any;
+        mockEnv.S3_BUCKET = '' as any;
+        mockEnv.S3_ACCESS_KEY_ID = '';
+        mockEnv.S3_SECRET_ACCESS_KEY = '';
+
+        const cache = new CacheImpl(db as any, mockEnv, 'cache', 's3');
+
+        expect(await cache.get('key1')).toBe('value1');
+    });
 });
 
 describe('CacheImpl - 工厂函数测试', () => {
@@ -679,5 +726,59 @@ describe('CacheImpl - getOrSet 和 getOrDefault', () => {
             expect(await cacheImpl.getOrDefault('array', [1, 2, 3])).toEqual([1, 2, 3]);
             expect(await cacheImpl.getOrDefault('object', { key: 'value' })).toEqual({ key: 'value' });
         });
+    });
+});
+
+describe('CacheImpl - 公共缓存开关', () => {
+    let { db, sqlite } = createTestDB();
+    let mockEnv: Env;
+    let cacheImpl: CacheImpl;
+    let clientConfig: CacheImpl;
+
+    beforeEach(() => {
+        const testDB = createTestDB();
+        db = testDB.db;
+        sqlite = testDB.sqlite;
+        mockEnv = createMockEnv('database');
+        cacheImpl = new CacheImpl(db as any, mockEnv, 'cache', 'database');
+        clientConfig = new CacheImpl(db as any, mockEnv, 'client.config', 'database');
+    });
+
+    afterEach(() => {
+        sqlite.close();
+    });
+
+    it('默认关闭时不读取或写入公共缓存', async () => {
+        const seededCache = new CacheImpl(db as any, mockEnv, 'cache', 'database');
+        await seededCache.set('feed_1', { title: 'cached' });
+        cacheImpl = new CacheImpl(db as any, mockEnv, 'cache', 'database', clientConfig);
+
+        expect(await cacheImpl.get('feed_1')).toBeNull();
+
+        let computed = false;
+        const value = await cacheImpl.getOrSet('feed_1', async () => {
+            computed = true;
+            return { title: 'fresh' };
+        });
+
+        expect(computed).toBe(true);
+        expect(value).toEqual({ title: 'fresh' });
+        expect(await seededCache.get('feed_1')).toEqual({ title: 'cached' });
+    });
+
+    it('启用后应正常命中公共缓存', async () => {
+        await clientConfig.set('cache.enabled', true);
+        await cacheImpl.set('feed_1', { title: 'cached' });
+
+        const enabledCache = new CacheImpl(db as any, mockEnv, 'cache', 'database', clientConfig);
+        expect(await enabledCache.get('feed_1')).toEqual({ title: 'cached' });
+    });
+
+    it('client.config 不应受公共缓存开关影响', async () => {
+        await clientConfig.set('cache.enabled', false);
+        await clientConfig.set('site.name', 'Rin Test');
+
+        const freshClientConfig = new CacheImpl(db as any, mockEnv, 'client.config', 'database');
+        expect(await freshClientConfig.get('site.name')).toBe('Rin Test');
     });
 });

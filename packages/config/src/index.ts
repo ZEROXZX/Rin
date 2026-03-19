@@ -4,8 +4,14 @@ export const WEBHOOK_URL_KEY = "WEBHOOK_URL";
 
 export const CLIENT_CONFIG_DEFAULTS = new Map(
   Object.entries({
+    "cache.enabled": false,
     "counter.enabled": true,
     "friend_apply_enable": true,
+    "header.behavior": "fixed",
+    "header.layout": "classic",
+    "feed.layout": "list",
+    "feed.card_variant": "default",
+    "theme.color": "#fc466b",
     "comment.enabled": true,
     "login.enabled": true,
     "site.name": "Rin",
@@ -76,5 +82,31 @@ export class ConfigWrapper {
 
   default<T>(key: string) {
     return this.defaultConfig.get(key) as T;
+  }
+
+  getBoolean(key: string) {
+    const value = this.get<unknown>(key);
+
+    if (typeof value === "boolean") {
+      return value;
+    }
+
+    if (typeof value === "string") {
+      const normalizedValue = value.trim().toLowerCase();
+
+      if (normalizedValue === "true") {
+        return true;
+      }
+
+      if (normalizedValue === "false") {
+        return false;
+      }
+    }
+
+    if (typeof value === "number") {
+      return value !== 0;
+    }
+
+    return Boolean(value);
   }
 }

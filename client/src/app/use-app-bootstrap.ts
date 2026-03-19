@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { ConfigWrapper } from "@rin/config";
 import type { Profile } from "../state/profile";
 import { defaultClientConfig } from "../state/config";
+import { applyThemeColor } from "../utils/theme-color";
+import { readBootstrappedClientConfig } from "./bootstrap-config";
 import { client } from "./runtime";
 
 function applyViewportScaling() {
@@ -21,6 +23,12 @@ export function useAppBootstrap() {
       return;
     }
 
+    const updateClientConfig = (nextConfig: Record<string, unknown>) => {
+      sessionStorage.setItem("config", JSON.stringify(nextConfig));
+      setConfig(new ConfigWrapper(nextConfig, defaultClientConfig));
+      applyThemeColor(typeof nextConfig["theme.color"] === "string" ? nextConfig["theme.color"] : undefined);
+    };
+
     client.user.profile().then(({ data, error }) => {
       if (data) {
         setProfile({
@@ -35,16 +43,14 @@ export function useAppBootstrap() {
     });
 
     const cachedConfig = sessionStorage.getItem("config");
-    if (cachedConfig) {
+    const bootstrappedConfig = readBootstrappedClientConfig();
+
+    if (bootstrappedConfig) {
+      updateClientConfig(bootstrappedConfig);
+    } else if (cachedConfig) {
       const configObject = JSON.parse(cachedConfig) as Record<string, unknown>;
       setConfig(new ConfigWrapper(configObject, defaultClientConfig));
-    } else {
-      client.config.get("client").then(({ data }) => {
-        if (data) {
-          sessionStorage.setItem("config", JSON.stringify(data));
-          setConfig(new ConfigWrapper(data, defaultClientConfig));
-        }
-      });
+      applyThemeColor(typeof configObject["theme.color"] === "string" ? configObject["theme.color"] : undefined);
     }
 
     initializedRef.current = true;
